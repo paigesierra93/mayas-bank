@@ -9,7 +9,7 @@ CLIENT_FILE = "ledger.csv"
 PERSONAL_FILE = "my_budget.csv"
 QUOTES_FILE = "quotes.csv"
 GOALS_FILE = "goals.csv"
-FACTS_FILE = "facts.csv"  # <--- New File for Facts!
+FACTS_FILE = "facts.csv"
 
 # --- DATA LOADING ---
 def load_client_data():
@@ -105,4 +105,232 @@ st.markdown("""
     .history-card { background-color: #1c1e26; padding: 10px; border-radius: 8px; margin-bottom: 8px; border-left: 4px solid #555; }
     .pos { border-left-color: #00cc00; }
     .neg { border-left-color: #ff4444; }
-    .gold { border-left-
+    .gold { border-left-color: #ffd700; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- INTRO LOGIC (THE CHRISTMAS CHECK) ---
+if 'intro_seen' not in st.session_state:
+    st.session_state['intro_seen'] = False
+
+if not st.session_state['intro_seen']:
+    # CHECK: Is this the first run ever? (We check if the ledger file exists)
+    is_first_run = not os.path.exists(CLIENT_FILE)
+    
+    if is_first_run:
+        # SCENARIO A: CHRISTMAS MORNING
+        st.snow()
+        st.markdown('<div class="fact-card">', unsafe_allow_html=True)
+        st.title("🎄 Merry Christmas, Maya! 🎄")
+        st.write("### To my beautiful and smart niece,")
+        st.write("""
+        I've created this software for you so you can begin your journey into your future. 
+        You have such a bright path ahead of you in accounting, and every accountant needs 
+        their first set of books.
+        
+        I hope this tool will help you learn how money grows, how to track clients, 
+        and how to build your own wealth.
+        
+        Love, Aunt Paige
+        """)
+        st.markdown('</div>', unsafe_allow_html=True)
+        if st.button("🚀 Launch My Accounting System", type="primary"):
+            st.session_state['intro_seen'] = True
+            st.rerun()
+
+    else:
+        # SCENARIO B: EVERY DAY AFTER (DAILY FACT)
+        daily_fact = get_daily_content(FACTS_FILE, "Fun Fact", "Accountants are the rock stars of business.")
+        
+        st.markdown('<div class="fact-card">', unsafe_allow_html=True)
+        st.title("🧠 Accountant Fact of the Day")
+        st.write(f"### {daily_fact}")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        if st.button("✨ Enter Empire Mode ✨", type="primary"):
+            st.session_state['intro_seen'] = True
+            st.rerun()
+
+# --- MAIN APP ---
+else:
+    # Navigation Sidebar
+    st.sidebar.title("💅 Navigation")
+    mode = st.sidebar.radio("Go to:", ["💼 The Firm (Clients)", "👛 My Empire (Budget)"])
+
+    # 1. THE FIRM
+    if mode == "💼 The Firm (Clients)":
+        st.title("💼 The Firm: Client Management")
+        df = load_client_data()
+        existing_clients = df["Client"].unique().tolist() if not df.empty else []
+        client_menu = ["➕ Add New Client"] + existing_clients
+        selected_client = st.sidebar.selectbox("Select Client", client_menu)
+
+        if selected_client == "➕ Add New Client":
+            new_name = st.sidebar.text_input("Client Name")
+            if st.sidebar.button("Add Client"):
+                if new_name and new_name not in existing_clients:
+                    save_client_transaction(new_name, "Open", 0, "Welcome", 0, 0)
+                    st.rerun()
+            st.stop()
+        
+        current_client = selected_client
+        client_df = df[df["Client"] == current_client]
+        client_balance = client_df.iloc[-1]["Savings_Balance"] if not client_df.empty else 0.0
+        total_revenue = df["Niece_Earnings"].sum()
+
+        st.sidebar.markdown("---")
+        st.sidebar.metric("Your Total Earnings", f"${total_revenue:,.2f}")
+        st.sidebar.metric(f"{current_client}'s Balance", f"${client_balance:,.2f}")
+
+        tab1, tab2 = st.tabs(["💸 Transactions", "🧾 Ledger"])
+        with tab1:
+            st.subheader(f"Managing: {current_client}")
+            action = st.radio("Action:", ["Incoming Deposit", "Client Withdrawal", "Charge Penalty"], horizontal=True)
+            if action == "Incoming Deposit":
+                amount = st.number_input("Deposit Amount", value=10.00)
+                st.write(f"**Quiz:** What is 15% of ${amount}?")
+                guess = st.number_input("Your Math:", value=0.00)
+                if st.button("Secure the Bag 💰"):
+                    real_earn = round(amount * 0.15, 2)
+                    client_save = amount - real_earn
+                    if abs(guess - real_earn) < 0.01:
+                        st.success(f"Correct! {get_sass('good_math')}")
+                        st.balloons()
+                        note = "Deposit (Math Correct)"
+                    else:
+                        st.error(f"Wrong. Answer is ${real_earn}. {get_sass('bad_math')}")
+                        note = "Deposit (Auto-Fixed)"
+                    save_client_transaction(current_client, "Deposit", amount, note, client_save, real_earn)
+                    st.rerun()
+            elif action == "Charge Penalty":
+                days = st.number_input("Days Late", min_value=1)
+                penalty = days * 5.00
+                if st.button("Charge Penalty 💀"):
+                    save_client_transaction(current_client, "Penalty", penalty, "Late Fee", 0, penalty)
+                    st.success("Penalty Charged.")
+                    st.rerun()
+            elif action == "Client Withdrawal":
+                amount = st.number_input("Withdraw Amount", min_value=0.0)
+                if st.button("Process"):
+                     if amount <= client_balance:
+                        save_client_transaction(current_client, "Withdrawal", amount, "Client access", -amount, 0)
+                        st.success("Processed.")
+                        st.rerun()
+        with tab2:
+            st.dataframe(client_df.sort_index(ascending=False), use_container_width=True)
+
+    # 2. MY EMPIRE
+    elif mode == "👛 My Empire (Budget)":
+        quote = get_daily_content(QUOTES_FILE, "DailyMotoQuote", "Secure the bag.")
+        st.toast(f"✨ Daily Vibe: {quote}")
+        st.title("👛 My Empire")
+        st.markdown(f'<div class="quote-box">📅 <strong>Daily Wisdom:</strong> "{quote}"</div>', unsafe_allow_html=True)
+
+        client_df = load_client_data()
+        personal_df = load_personal_data()
+        goals_df = load_goals()
+        
+        total_earned = client_df["Niece_Earnings"].sum() if not client_df.empty else 0.0
+        total_spent = abs(personal_df[personal_df["Amount"] < 0]["Amount"].sum())
+        total_refunds = personal_df[personal_df["Category"] == "Refund"]["Amount"].sum()
+        net_spent = total_spent - total_refunds
+        total_in_goals = goals_df["Balance"].sum()
+        available_cash = total_earned + personal_df["Amount"].sum() - total_in_goals
+
+        st.subheader("🏆 The Goal Tracker")
+        cols = st.columns(3)
+        goal_names = goals_df["Name"].tolist()
+        for index, row in goals_df.iterrows():
+            with cols[index]:
+                st.markdown(f"### {row['Name']}")
+                progress = min(row['Balance'] / row['Target'], 1.0)
+                st.progress(progress)
+                st.write(f"**${row['Balance']:,.0f}** / ${row['Target']:,.0f}")
+                if row['Balance'] >= row['Target']: st.success("GOAL MET! 🎉")
+
+        st.markdown("---")
+        st.subheader("💸 Money Mover")
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            st.metric("💵 Cash Available", f"${available_cash:,.2f}")
+            source_options = ["Available Cash"] + goal_names
+            source = st.selectbox("From:", source_options)
+            dest_options = ["Available Cash"] + goal_names + ["💸 SPENDING (Gone forever)"]
+            dest_options = [d for d in dest_options if d != source]
+            destination = st.selectbox("To:", dest_options)
+            amount = st.number_input("Amount ($)", min_value=0.01, value=10.00)
+            
+            if st.button("Execute Transaction"):
+                # SAVING
+                if source == "Available Cash" and destination in goal_names:
+                    if amount > available_cash: st.error("Not enough cash.")
+                    else:
+                        update_goal(destination, amount)
+                        save_personal_transaction("Savings Transfer", f"Saved to {destination}", 0, get_sass("saving"))
+                        st.balloons()
+                        st.rerun()
+                # SPENDING
+                elif source == "Available Cash" and destination == "💸 SPENDING (Gone forever)":
+                    item = st.text_input("What did you buy?")
+                    if amount > available_cash: st.error("Insufficient funds.")
+                    else:
+                        save_personal_transaction("Spending", item, amount, get_sass("spending"))
+                        st.rerun()
+                # WITHDRAWING
+                elif source in goal_names and destination == "Available Cash":
+                    goal_row = goals_df[goals_df["Name"] == source].iloc[0]
+                    if amount > goal_row["Balance"]: st.error("Not enough funds.")
+                    else:
+                        if goal_row["Balance"] >= goal_row["Target"]:
+                            update_goal(source, -amount)
+                            save_personal_transaction("Reward", f"Cashed out {source}", amount, get_sass("goal_hit"))
+                            st.session_state['recycle_mode'] = source
+                            st.experimental_rerun()
+                        else:
+                            update_goal(source, -amount)
+                            save_personal_transaction("Early Withdrawal", f"Took from {source}", 0, get_sass("early_withdraw"))
+                            st.rerun()
+                # TRANSFER
+                elif source in goal_names and destination in goal_names:
+                    src_bal = goals_df[goals_df["Name"] == source].iloc[0]["Balance"]
+                    if amount > src_bal: st.error("Not enough funds.")
+                    else:
+                        update_goal(source, -amount)
+                        update_goal(destination, amount)
+                        st.success("Transferred.")
+                        st.rerun()
+            
+            # RECYCLE
+            if 'recycle_mode' in st.session_state:
+                old_name = st.session_state['recycle_mode']
+                st.info(f"♻️ Recycling '{old_name}'!")
+                new_n = st.text_input("New Name", value="New Goal")
+                new_t = st.number_input("New Target", value=500.0)
+                if st.button("Set New Goal"):
+                    reset_goal(old_name, new_n, new_t)
+                    del st.session_state['recycle_mode']
+                    st.rerun()
+        
+        with c2:
+            st.write("### 📜 Transaction Feed")
+            if not personal_df.empty:
+                for index, row in personal_df.sort_index(ascending=False).iterrows():
+                    amt = row['Amount']
+                    css_class = "pos"
+                    display_amt = f"+${abs(amt):.2f}"
+                    if amt < 0:
+                        css_class = "neg"
+                        display_amt = f"-${abs(amt):.2f}"
+                    if row['Category'] == "Reward":
+                        css_class = "gold"
+                        display_amt = f"+${abs(amt):.2f} (Reward)"
+                    st.markdown(f"""
+                    <div class="history-card {css_class}">
+                        <div style="display:flex; justify-content:space-between;">
+                            <strong>{row['Item']} ({row['Category']})</strong>
+                            <span>{row['Date']}</span>
+                        </div>
+                        <div style="font-size: 20px; font-weight: bold;">{display_amt}</div>
+                        <div style="font-style: italic; color: #bbb;">"{row['Sass_Level']}"</div>
+                    </div>
+                    """, unsafe_allow_html=True)
