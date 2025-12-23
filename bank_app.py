@@ -61,8 +61,11 @@ def save_client_transaction(client_name, type, amount, note, savings_change, ear
 
 def save_personal_transaction(category, item, amount, sass):
     df = load_personal_data()
+    # If Spending or Withdrawal, make negative. 
+    # Deposits (Income) and Refunds stay POSITIVE.
     if category in ["Spending", "Withdraw from Savings", "Early Withdrawal"]:
         amount = -amount
+    
     new_entry = pd.DataFrame([{
         "Date": datetime.now().strftime("%Y-%m-%d %H:%M"), "Category": category, 
         "Item": item, "Amount": amount, "Sass_Level": sass
@@ -93,6 +96,9 @@ def get_sass(mood):
     elif mood == "goal_hit": return "You earned it. Feels good huh? 🏆"
     elif mood == "early_withdraw": return "Quitting halfway? Ouch."
     elif mood == "refund": return "We love a return policy."
+    
+    # NEW GIFT MOOD
+    elif mood == "gift": return random.choice(["We love a rich relative. 💅", "Girl math: It's free money.", "Grandma came through! 👵💸", "Blessings on blessings."])
 
 # --- CONFIG & STYLE ---
 st.set_page_config(page_title="Maya's Empire", page_icon="💅", layout="wide")
@@ -231,10 +237,14 @@ else:
         goals_df = load_goals()
         
         total_earned = client_df["Niece_Earnings"].sum() if not client_df.empty else 0.0
+        # Calculate Spending (Negatives)
         total_spent = abs(personal_df[personal_df["Amount"] < 0]["Amount"].sum())
+        # Calculate Refunds (Positives that were refunds)
         total_refunds = personal_df[personal_df["Category"] == "Refund"]["Amount"].sum()
-        net_spent = total_spent - total_refunds
+        
         total_in_goals = goals_df["Balance"].sum()
+        
+        # Available Cash = Total Earnings + Net Personal Transactions (Spending is neg, Gifts are pos) - Goal Money
         available_cash = total_earned + personal_df["Amount"].sum() - total_in_goals
 
         # --- GOAL DASHBOARD ---
@@ -249,19 +259,15 @@ else:
                 st.write(f"**${row['Balance']:,.0f}** / ${row['Target']:,.0f}")
                 if row['Balance'] >= row['Target']: st.success("GOAL MET! 🎉")
         
-        # --- NEW: EDIT GOALS SECTION (Restored!) ---
         with st.expander("⚙️ Edit Goal Details"):
             col_e1, col_e2 = st.columns(2)
             with col_e1:
                 edit_goal = st.selectbox("Select Goal to Edit", goal_names)
             with col_e2:
-                # Find current name/target to pre-fill
                 current_row = goals_df[goals_df["Name"] == edit_goal].iloc[0]
                 new_n = st.text_input("Rename Goal:", value=current_row["Name"])
                 new_t = st.number_input("Change Target ($):", value=float(current_row["Target"]))
-                
                 if st.button("Update Goal Settings"):
-                    # Update without deleting balance
                     idx = goals_df.index[goals_df['Name'] == edit_goal].tolist()[0]
                     goals_df.at[idx, 'Name'] = new_n
                     goals_df.at[idx, 'Target'] = new_t
@@ -274,54 +280,72 @@ else:
         c1, c2 = st.columns([1, 1])
         with c1:
             st.metric("💵 Cash Available", f"${available_cash:,.2f}")
-            source_options = ["Available Cash"] + goal_names
-            source = st.selectbox("From:", source_options)
-            dest_options = ["Available Cash"] + goal_names + ["💸 SPENDING (Gone forever)"]
-            dest_options = [d for d in dest_options if d != source]
-            destination = st.selectbox("To:", dest_options)
-            amount = st.number_input("Amount ($)", min_value=0.01, value=10.00)
             
-            if st.button("Execute Transaction"):
-                # SAVING
-                if source == "Available Cash" and destination in goal_names:
-                    if amount > available_cash: st.error("Not enough cash.")
-                    else:
-                        update_goal(destination, amount)
-                        save_personal_transaction("Savings Transfer", f"Saved to {destination}", 0, get_sass("saving"))
-                        st.balloons()
-                        st.rerun()
-                # SPENDING
-                elif source == "Available Cash" and destination == "💸 SPENDING (Gone forever)":
-                    item = st.text_input("What did you buy?")
+            # --- NEW: RADIO BUTTON WITH DEPOSIT OPTION ---
+            move_type = st.radio("What are we doing?", 
+                                 ["➕ Deposit Cash (Gift/Allowance)", 
+                                  "💸 Spending (Buying Stuff)", 
+                                  "🐷 Saving (Stashing Cash)", 
+                                  "↩️ Return / Refund (Undo Spending)", 
+                                  "🔓 Withdraw from Savings (Use Goal Money)"])
+            
+            amount = st.number_input("Amount ($)", min_value=0.01, value=10.00)
+
+            # 1. DEPOSIT CASH (NEW)
+            if "Deposit Cash" in move_type:
+                source_desc = st.text_input("From who? (e.g. Nana, Allowance)", value="Nana")
+                if st.button("Add Cash 💵"):
+                    save_personal_transaction("Income", source_desc, amount, get_sass("gift"))
+                    st.balloons()
+                    st.success(f"Added ${amount} from {source_desc}!")
+                    st.rerun()
+
+            # 2. SPENDING
+            elif "Spending" in move_type:
+                item = st.text_input("What did you buy?")
+                if st.button("Buy it 🛍️"):
                     if amount > available_cash: st.error("Insufficient funds.")
                     else:
                         save_personal_transaction("Spending", item, amount, get_sass("spending"))
                         st.rerun()
-                # WITHDRAWING
-                elif source in goal_names and destination == "Available Cash":
-                    goal_row = goals_df[goals_df["Name"] == source].iloc[0]
+
+            # 3. SAVING
+            elif "Saving" in move_type:
+                target_goal = st.selectbox("Which Goal?", goal_names)
+                if st.button("Stash it 💰"):
+                    if amount > available_cash: st.error("Not enough cash.")
+                    else:
+                        update_goal(target_goal, amount)
+                        save_personal_transaction("Savings Transfer", f"Saved to {target_goal}", 0, get_sass("saving"))
+                        st.balloons()
+                        st.rerun()
+
+            # 4. REFUND
+            elif "Return" in move_type:
+                item = st.text_input("What did you return?")
+                if st.button("Process Refund"):
+                    save_personal_transaction("Refund", item, amount, get_sass("refund"))
+                    st.success("Refund processed!")
+                    st.rerun()
+
+            # 5. WITHDRAW GOAL
+            elif "Withdraw from Savings" in move_type:
+                source_goal = st.selectbox("Take from which goal?", goal_names)
+                if st.button("Withdraw"):
+                    goal_row = goals_df[goals_df["Name"] == source_goal].iloc[0]
                     if amount > goal_row["Balance"]: st.error("Not enough funds.")
                     else:
                         if goal_row["Balance"] >= goal_row["Target"]:
-                            update_goal(source, -amount)
-                            save_personal_transaction("Reward", f"Cashed out {source}", amount, get_sass("goal_hit"))
-                            st.session_state['recycle_mode'] = source
+                            update_goal(source_goal, -amount)
+                            save_personal_transaction("Reward", f"Cashed out {source_goal}", amount, get_sass("goal_hit"))
+                            st.session_state['recycle_mode'] = source_goal
                             st.experimental_rerun()
                         else:
-                            update_goal(source, -amount)
-                            save_personal_transaction("Early Withdrawal", f"Took from {source}", 0, get_sass("early_withdraw"))
+                            update_goal(source_goal, -amount)
+                            save_personal_transaction("Early Withdrawal", f"Took from {source_goal}", 0, get_sass("early_withdraw"))
                             st.rerun()
-                # TRANSFER
-                elif source in goal_names and destination in goal_names:
-                    src_bal = goals_df[goals_df["Name"] == source].iloc[0]["Balance"]
-                    if amount > src_bal: st.error("Not enough funds.")
-                    else:
-                        update_goal(source, -amount)
-                        update_goal(destination, amount)
-                        st.success("Transferred.")
-                        st.rerun()
             
-            # RECYCLE (Triggered automatically when hitting a goal)
+            # RECYCLE POPUP
             if 'recycle_mode' in st.session_state:
                 old_name = st.session_state['recycle_mode']
                 st.info(f"♻️ Recycling '{old_name}'!")
@@ -339,12 +363,15 @@ else:
                     amt = row['Amount']
                     css_class = "pos"
                     display_amt = f"+${abs(amt):.2f}"
+                    
                     if amt < 0:
                         css_class = "neg"
                         display_amt = f"-${abs(amt):.2f}"
-                    if row['Category'] == "Reward":
+                    elif row['Category'] == "Reward":
                         css_class = "gold"
                         display_amt = f"+${abs(amt):.2f} (Reward)"
+                    # Income/Refunds stay Green (pos)
+
                     st.markdown(f"""
                     <div class="history-card {css_class}">
                         <div style="display:flex; justify-content:space-between;">
