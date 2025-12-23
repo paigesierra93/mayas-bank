@@ -237,6 +237,7 @@ else:
         total_in_goals = goals_df["Balance"].sum()
         available_cash = total_earned + personal_df["Amount"].sum() - total_in_goals
 
+        # --- GOAL DASHBOARD ---
         st.subheader("🏆 The Goal Tracker")
         cols = st.columns(3)
         goal_names = goals_df["Name"].tolist()
@@ -247,6 +248,26 @@ else:
                 st.progress(progress)
                 st.write(f"**${row['Balance']:,.0f}** / ${row['Target']:,.0f}")
                 if row['Balance'] >= row['Target']: st.success("GOAL MET! 🎉")
+        
+        # --- NEW: EDIT GOALS SECTION (Restored!) ---
+        with st.expander("⚙️ Edit Goal Details"):
+            col_e1, col_e2 = st.columns(2)
+            with col_e1:
+                edit_goal = st.selectbox("Select Goal to Edit", goal_names)
+            with col_e2:
+                # Find current name/target to pre-fill
+                current_row = goals_df[goals_df["Name"] == edit_goal].iloc[0]
+                new_n = st.text_input("Rename Goal:", value=current_row["Name"])
+                new_t = st.number_input("Change Target ($):", value=float(current_row["Target"]))
+                
+                if st.button("Update Goal Settings"):
+                    # Update without deleting balance
+                    idx = goals_df.index[goals_df['Name'] == edit_goal].tolist()[0]
+                    goals_df.at[idx, 'Name'] = new_n
+                    goals_df.at[idx, 'Target'] = new_t
+                    goals_df.to_csv(GOALS_FILE, index=False)
+                    st.success(f"Updated {edit_goal}!")
+                    st.rerun()
 
         st.markdown("---")
         st.subheader("💸 Money Mover")
@@ -300,13 +321,13 @@ else:
                         st.success("Transferred.")
                         st.rerun()
             
-            # RECYCLE
+            # RECYCLE (Triggered automatically when hitting a goal)
             if 'recycle_mode' in st.session_state:
                 old_name = st.session_state['recycle_mode']
                 st.info(f"♻️ Recycling '{old_name}'!")
-                new_n = st.text_input("New Name", value="New Goal")
-                new_t = st.number_input("New Target", value=500.0)
-                if st.button("Set New Goal"):
+                new_n = st.text_input("New Name (Recycle)", value="New Goal")
+                new_t = st.number_input("New Target (Recycle)", value=500.0)
+                if st.button("Set New Goal (Recycle)"):
                     reset_goal(old_name, new_n, new_t)
                     del st.session_state['recycle_mode']
                     st.rerun()
