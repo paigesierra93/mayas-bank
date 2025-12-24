@@ -12,10 +12,6 @@ GOALS_FILE = "goals.csv"
 FACTS_FILE = "facts.csv"
 PIG_FILE = "pig_map.csv"
 
-# --- BANNER FILES ---
-EMPIRE_BANNER = "banner.png"       # For "My Empire"
-FIRM_BANNER = "firm_banner.png"    # For "The Firm"
-
 # --- DATA LOADING ---
 def load_client_data():
     if not os.path.exists(CLIENT_FILE):
@@ -50,6 +46,25 @@ def get_daily_content(file_path, column_name, fallback):
         return df.iloc[index][column_name]
     except:
         return fallback
+
+# --- HELPER: FIND BANNER IMAGE ---
+def show_smart_banner(base_name, fallback_title):
+    # This checks for banner.png, Banner.png, banner.jpg, etc.
+    possible_files = [
+        f"{base_name}.png", f"{base_name}.PNG",
+        f"{base_name}.jpg", f"{base_name}.JPG",
+        f"{base_name}.jpeg"
+    ]
+    
+    found = False
+    for f in possible_files:
+        if os.path.exists(f):
+            st.image(f, use_container_width=True)
+            found = True
+            break
+            
+    if not found:
+        st.title(fallback_title)
 
 # --- PIGGY BANK LOGIC ---
 def get_pig_image(current_percent):
@@ -174,11 +189,8 @@ else:
     # 1. THE FIRM
     if mode == "💼 The Firm (Clients)":
         
-        # --- NEW: FIRM BANNER ---
-        if os.path.exists(FIRM_BANNER):
-            st.image(FIRM_BANNER, use_column_width=True)
-        else:
-            st.title("💼 The Firm: Client Management")
+        # Smart Check for Firm Banner (firm_banner.png, firm_banner.jpg, etc.)
+        show_smart_banner("firm_banner", "💼 The Firm: Client Management")
 
         st.caption("Manage other people's money. Collect your fees.")
 
@@ -246,11 +258,8 @@ else:
         quote = get_daily_content(QUOTES_FILE, "DailyMotoQuote", "Secure the bag.")
         st.toast(f"✨ Daily Vibe: {quote}")
         
-        # --- EMPIRE BANNER ---
-        if os.path.exists(EMPIRE_BANNER):
-            st.image(EMPIRE_BANNER, use_column_width=True)
-        else:
-            st.title("👛 My Empire")
+        # Smart Check for Empire Banner (banner.png, banner.jpg, etc.)
+        show_smart_banner("banner", "👛 My Empire")
             
         st.markdown(f'<div class="quote-box">📅 <strong>Daily Wisdom:</strong> "{quote}"</div>', unsafe_allow_html=True)
 
