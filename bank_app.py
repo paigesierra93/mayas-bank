@@ -10,6 +10,7 @@ PERSONAL_FILE = "my_budget.csv"
 QUOTES_FILE = "quotes.csv"
 GOALS_FILE = "goals.csv"
 FACTS_FILE = "facts.csv"
+PIG_FILE = "pig_map.csv"
 
 # --- DATA LOADING ---
 def load_client_data():
@@ -46,6 +47,21 @@ def get_daily_content(file_path, column_name, fallback):
     except:
         return fallback
 
+# --- PIGGY BANK LOGIC ---
+def get_pig_image(current_percent):
+    if not os.path.exists(PIG_FILE):
+        return None
+    try:
+        df = pd.read_csv(PIG_FILE)
+        df = df.sort_values(by="Threshold")
+        selected_image = df.iloc[0]["Image_File"]
+        for index, row in df.iterrows():
+            if current_percent >= row["Threshold"]:
+                selected_image = row["Image_File"]
+        return selected_image
+    except:
+        return None
+
 # --- SAVE FUNCTIONS ---
 def save_client_transaction(client_name, type, amount, note, savings_change, earnings_change):
     df = load_client_data()
@@ -61,11 +77,9 @@ def save_client_transaction(client_name, type, amount, note, savings_change, ear
 
 def save_personal_transaction(category, item, amount, sass):
     df = load_personal_data()
-    # If Spending or Withdrawal, make negative. 
-    # Deposits (Income) and Refunds stay POSITIVE.
+    # Spending/Withdrawals are negative. Income/Refunds are positive.
     if category in ["Spending", "Withdraw from Savings", "Early Withdrawal"]:
         amount = -amount
-    
     new_entry = pd.DataFrame([{
         "Date": datetime.now().strftime("%Y-%m-%d %H:%M"), "Category": category, 
         "Item": item, "Amount": amount, "Sass_Level": sass
@@ -96,9 +110,7 @@ def get_sass(mood):
     elif mood == "goal_hit": return "You earned it. Feels good huh? 🏆"
     elif mood == "early_withdraw": return "Quitting halfway? Ouch."
     elif mood == "refund": return "We love a return policy."
-    
-    # NEW GIFT MOOD
-    elif mood == "gift": return random.choice(["We love a rich relative. 💅", "Girl math: It's free money.", "Grandma came through! 👵💸", "Blessings on blessings."])
+    elif mood == "gift": return random.choice(["We love a rich relative. 💅", "Girl math: It's free money.", "Grandma came through! 👵💸"])
 
 # --- CONFIG & STYLE ---
 st.set_page_config(page_title="Maya's Empire", page_icon="💅", layout="wide")
@@ -115,16 +127,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- INTRO LOGIC (THE CHRISTMAS CHECK) ---
+# --- INTRO LOGIC ---
 if 'intro_seen' not in st.session_state:
     st.session_state['intro_seen'] = False
 
 if not st.session_state['intro_seen']:
-    # CHECK: Is this the first run ever? (We check if the ledger file exists)
     is_first_run = not os.path.exists(CLIENT_FILE)
-    
     if is_first_run:
-        # SCENARIO A: CHRISTMAS MORNING
         st.snow()
         st.markdown('<div class="fact-card">', unsafe_allow_html=True)
         st.title("🎄 Merry Christmas, Maya! 🎄")
@@ -143,23 +152,18 @@ if not st.session_state['intro_seen']:
         if st.button("🚀 Launch My Accounting System", type="primary"):
             st.session_state['intro_seen'] = True
             st.rerun()
-
     else:
-        # SCENARIO B: EVERY DAY AFTER (DAILY FACT)
         daily_fact = get_daily_content(FACTS_FILE, "Fun Fact", "Accountants are the rock stars of business.")
-        
         st.markdown('<div class="fact-card">', unsafe_allow_html=True)
         st.title("🧠 Accountant Fact of the Day")
         st.write(f"### {daily_fact}")
         st.markdown('</div>', unsafe_allow_html=True)
-        
         if st.button("✨ Enter Empire Mode ✨", type="primary"):
             st.session_state['intro_seen'] = True
             st.rerun()
 
 # --- MAIN APP ---
 else:
-    # Navigation Sidebar
     st.sidebar.title("💅 Navigation")
     mode = st.sidebar.radio("Go to:", ["💼 The Firm (Clients)", "👛 My Empire (Budget)"])
 
@@ -237,27 +241,33 @@ else:
         goals_df = load_goals()
         
         total_earned = client_df["Niece_Earnings"].sum() if not client_df.empty else 0.0
-        # Calculate Spending (Negatives)
-        total_spent = abs(personal_df[personal_df["Amount"] < 0]["Amount"].sum())
-        # Calculate Refunds (Positives that were refunds)
-        total_refunds = personal_df[personal_df["Category"] == "Refund"]["Amount"].sum()
-        
         total_in_goals = goals_df["Balance"].sum()
-        
-        # Available Cash = Total Earnings + Net Personal Transactions (Spending is neg, Gifts are pos) - Goal Money
         available_cash = total_earned + personal_df["Amount"].sum() - total_in_goals
 
-        # --- GOAL DASHBOARD ---
+        # --- GOAL DASHBOARD (WITH PIGGY!) ---
         st.subheader("🏆 The Goal Tracker")
         cols = st.columns(3)
         goal_names = goals_df["Name"].tolist()
         for index, row in goals_df.iterrows():
             with cols[index]:
                 st.markdown(f"### {row['Name']}")
-                progress = min(row['Balance'] / row['Target'], 1.0)
-                st.progress(progress)
+                
+                # 1. Calc Percent
+                percent = 0.0
+                if row['Target'] > 0:
+                    percent = row['Balance'] / row['Target']
+                
+                # 2. Show Progress Bar
+                st.progress(min(percent, 1.0))
                 st.write(f"**${row['Balance']:,.0f}** / ${row['Target']:,.0f}")
-                if row['Balance'] >= row['Target']: st.success("GOAL MET! 🎉")
+                
+                # 3. SHOW THE PIG
+                # Convert 0.5 to 50 for the function
+                pig_pic = get_pig_image(percent * 100)
+                if pig_pic and os.path.exists(pig_pic):
+                    st.image(pig_pic, width=150)
+                
+                if percent >= 1.0: st.success("GOAL MET! 🎉")
         
         with st.expander("⚙️ Edit Goal Details"):
             col_e1, col_e2 = st.columns(2)
@@ -280,8 +290,6 @@ else:
         c1, c2 = st.columns([1, 1])
         with c1:
             st.metric("💵 Cash Available", f"${available_cash:,.2f}")
-            
-            # --- NEW: RADIO BUTTON WITH DEPOSIT OPTION ---
             move_type = st.radio("What are we doing?", 
                                  ["➕ Deposit Cash (Gift/Allowance)", 
                                   "💸 Spending (Buying Stuff)", 
@@ -291,16 +299,13 @@ else:
             
             amount = st.number_input("Amount ($)", min_value=0.01, value=10.00)
 
-            # 1. DEPOSIT CASH (NEW)
             if "Deposit Cash" in move_type:
-                source_desc = st.text_input("From who? (e.g. Nana, Allowance)", value="Nana")
+                source_desc = st.text_input("From who?", value="Nana")
                 if st.button("Add Cash 💵"):
                     save_personal_transaction("Income", source_desc, amount, get_sass("gift"))
                     st.balloons()
-                    st.success(f"Added ${amount} from {source_desc}!")
                     st.rerun()
 
-            # 2. SPENDING
             elif "Spending" in move_type:
                 item = st.text_input("What did you buy?")
                 if st.button("Buy it 🛍️"):
@@ -309,7 +314,6 @@ else:
                         save_personal_transaction("Spending", item, amount, get_sass("spending"))
                         st.rerun()
 
-            # 3. SAVING
             elif "Saving" in move_type:
                 target_goal = st.selectbox("Which Goal?", goal_names)
                 if st.button("Stash it 💰"):
@@ -320,7 +324,6 @@ else:
                         st.balloons()
                         st.rerun()
 
-            # 4. REFUND
             elif "Return" in move_type:
                 item = st.text_input("What did you return?")
                 if st.button("Process Refund"):
@@ -328,7 +331,6 @@ else:
                     st.success("Refund processed!")
                     st.rerun()
 
-            # 5. WITHDRAW GOAL
             elif "Withdraw from Savings" in move_type:
                 source_goal = st.selectbox("Take from which goal?", goal_names)
                 if st.button("Withdraw"):
@@ -345,7 +347,6 @@ else:
                             save_personal_transaction("Early Withdrawal", f"Took from {source_goal}", 0, get_sass("early_withdraw"))
                             st.rerun()
             
-            # RECYCLE POPUP
             if 'recycle_mode' in st.session_state:
                 old_name = st.session_state['recycle_mode']
                 st.info(f"♻️ Recycling '{old_name}'!")
@@ -370,8 +371,7 @@ else:
                     elif row['Category'] == "Reward":
                         css_class = "gold"
                         display_amt = f"+${abs(amt):.2f} (Reward)"
-                    # Income/Refunds stay Green (pos)
-
+                    
                     st.markdown(f"""
                     <div class="history-card {css_class}">
                         <div style="display:flex; justify-content:space-between;">
