@@ -12,6 +12,10 @@ GOALS_FILE = "goals.csv"
 FACTS_FILE = "facts.csv"
 PIG_FILE = "pig_map.csv"
 
+# --- BANNER FILES ---
+EMPIRE_BANNER = "banner.png"       # For "My Empire"
+FIRM_BANNER = "firm_banner.png"    # For "The Firm"
+
 # --- DATA LOADING ---
 def load_client_data():
     if not os.path.exists(CLIENT_FILE):
@@ -165,12 +169,19 @@ if not st.session_state['intro_seen']:
 # --- MAIN APP ---
 else:
     st.sidebar.title("💅 Navigation")
-    # ADDED TUTORIAL OPTION HERE
     mode = st.sidebar.radio("Go to:", ["💼 The Firm (Clients)", "👛 My Empire (Budget)", "❓ How to Use (Tutorial)"])
 
     # 1. THE FIRM
     if mode == "💼 The Firm (Clients)":
-        st.title("💼 The Firm: Client Management")
+        
+        # --- NEW: FIRM BANNER ---
+        if os.path.exists(FIRM_BANNER):
+            st.image(FIRM_BANNER, use_column_width=True)
+        else:
+            st.title("💼 The Firm: Client Management")
+
+        st.caption("Manage other people's money. Collect your fees.")
+
         df = load_client_data()
         existing_clients = df["Client"].unique().tolist() if not df.empty else []
         client_menu = ["➕ Add New Client"] + existing_clients
@@ -234,7 +245,13 @@ else:
     elif mode == "👛 My Empire (Budget)":
         quote = get_daily_content(QUOTES_FILE, "DailyMotoQuote", "Secure the bag.")
         st.toast(f"✨ Daily Vibe: {quote}")
-        st.title("👛 My Empire")
+        
+        # --- EMPIRE BANNER ---
+        if os.path.exists(EMPIRE_BANNER):
+            st.image(EMPIRE_BANNER, use_column_width=True)
+        else:
+            st.title("👛 My Empire")
+            
         st.markdown(f'<div class="quote-box">📅 <strong>Daily Wisdom:</strong> "{quote}"</div>', unsafe_allow_html=True)
 
         client_df = load_client_data()
@@ -379,7 +396,7 @@ else:
                     </div>
                     """, unsafe_allow_html=True)
 
-    # 3. TUTORIAL PAGE (NEW!)
+    # 3. TUTORIAL PAGE
     elif mode == "❓ How to Use (Tutorial)":
         st.title("❓ The Boss Manual")
         st.markdown("Everything you need to know to run your empire.")
