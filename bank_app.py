@@ -77,7 +77,6 @@ def save_client_transaction(client_name, type, amount, note, savings_change, ear
 
 def save_personal_transaction(category, item, amount, sass):
     df = load_personal_data()
-    # Spending/Withdrawals are negative. Income/Refunds are positive.
     if category in ["Spending", "Withdraw from Savings", "Early Withdrawal"]:
         amount = -amount
     new_entry = pd.DataFrame([{
@@ -124,6 +123,7 @@ st.markdown("""
     .pos { border-left-color: #00cc00; }
     .neg { border-left-color: #ff4444; }
     .gold { border-left-color: #ffd700; }
+    .tutorial-box { background-color: #262730; padding: 20px; border-radius: 10px; border: 1px solid #555; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -165,7 +165,8 @@ if not st.session_state['intro_seen']:
 # --- MAIN APP ---
 else:
     st.sidebar.title("💅 Navigation")
-    mode = st.sidebar.radio("Go to:", ["💼 The Firm (Clients)", "👛 My Empire (Budget)"])
+    # ADDED TUTORIAL OPTION HERE
+    mode = st.sidebar.radio("Go to:", ["💼 The Firm (Clients)", "👛 My Empire (Budget)", "❓ How to Use (Tutorial)"])
 
     # 1. THE FIRM
     if mode == "💼 The Firm (Clients)":
@@ -244,7 +245,6 @@ else:
         total_in_goals = goals_df["Balance"].sum()
         available_cash = total_earned + personal_df["Amount"].sum() - total_in_goals
 
-        # --- GOAL DASHBOARD (WITH PIGGY!) ---
         st.subheader("🏆 The Goal Tracker")
         cols = st.columns(3)
         goal_names = goals_df["Name"].tolist()
@@ -252,17 +252,13 @@ else:
             with cols[index]:
                 st.markdown(f"### {row['Name']}")
                 
-                # 1. Calc Percent
                 percent = 0.0
                 if row['Target'] > 0:
                     percent = row['Balance'] / row['Target']
                 
-                # 2. Show Progress Bar
                 st.progress(min(percent, 1.0))
                 st.write(f"**${row['Balance']:,.0f}** / ${row['Target']:,.0f}")
                 
-                # 3. SHOW THE PIG
-                # Convert 0.5 to 50 for the function
                 pig_pic = get_pig_image(percent * 100)
                 if pig_pic and os.path.exists(pig_pic):
                     st.image(pig_pic, width=150)
@@ -382,3 +378,54 @@ else:
                         <div style="font-style: italic; color: #bbb;">"{row['Sass_Level']}"</div>
                     </div>
                     """, unsafe_allow_html=True)
+
+    # 3. TUTORIAL PAGE (NEW!)
+    elif mode == "❓ How to Use (Tutorial)":
+        st.title("❓ The Boss Manual")
+        st.markdown("Everything you need to know to run your empire.")
+        
+        st.markdown("""
+        <div class="tutorial-box">
+        <h3>1. 💼 The Firm (Making Money)</h3>
+        <p>This is where you act as the Accountant for clients (like your family).</p>
+        <ul>
+            <li><strong>Add Clients:</strong> Use the sidebar to add "Mom", "Dad", etc.</li>
+            <li><strong>Incoming Deposit:</strong> When they give you money to save, enter it here.</li>
+            <li><strong>The 15% Rule:</strong> The app <em>automatically</em> calculates your 15% fee. 
+                If they give you $100, $15 goes to YOU, and $85 goes to THEM.</li>
+            <li><strong>Penalties:</strong> If they are late, charge them! This money goes 100% to you.</li>
+        </ul>
+        </div>
+        
+        <div class="tutorial-box">
+        <h3>2. 👛 My Empire (Your Stash)</h3>
+        <p>This is your personal wallet. All your earnings from The Firm show up here automatically.</p>
+        <ul>
+            <li><strong>Available Cash:</strong> This is money in your pocket ready to be spent or saved.</li>
+            <li><strong>Goal Tracker:</strong> You have 3 savings buckets (Car, College, etc).</li>
+            <li><strong>The Pig:</strong> As you fill a goal, the pig picture will fill up with pink liquid! 🐷</li>
+        </ul>
+        </div>
+
+        <div class="tutorial-box">
+        <h3>3. 💸 The Money Mover</h3>
+        <p>This is how you move cash around in "My Empire".</p>
+        <ul>
+            <li><strong>➕ Deposit Cash:</strong> Use this for gifts (like $20 from Nana). It adds straight to your cash.</li>
+            <li><strong>💸 Spending:</strong> Use this when you buy something (Starbucks, Makeup). It subtracts from cash.</li>
+            <li><strong>🐷 Saving:</strong> Moves money from "Available Cash" into a "Goal". Watch the pig grow!</li>
+            <li><strong>🔓 Withdraw from Savings:</strong> Takes money OUT of a goal back to cash. 
+                <em>Warning: If you do this before the goal is full, the app will judge you.</em></li>
+        </ul>
+        </div>
+
+        <div class="tutorial-box">
+        <h3>4. ♻️ Recycling Goals</h3>
+        <p>When you hit 100% on a goal (like reaching $500 for a trip):</p>
+        <ul>
+            <li>Withdraw the money to spend it!</li>
+            <li>The app will ask if you want to <strong>"Recycle"</strong> the goal.</li>
+            <li>You can rename it to something new (e.g., change "Trip" to "Laptop") and start saving again!</li>
+        </ul>
+        </div>
+        """, unsafe_allow_html=True)
