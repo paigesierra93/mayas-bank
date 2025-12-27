@@ -11,7 +11,7 @@ QUOTES_FILE = "quotes.csv"
 GOALS_FILE = "goals.csv"
 FACTS_FILE = "facts.csv"
 PIG_FILE = "pig_map.csv"
-GIF_DIR = "gifs"  # The main folder
+GIF_DIR = "gifs"
 
 # --- BANNER FILES ---
 EMPIRE_BANNER = "banner.png"
@@ -116,23 +116,12 @@ def update_goal(goal_name, amount_change):
     df.at[idx, 'Balance'] += amount_change
     df.to_csv(GOALS_FILE, index=False)
 
-# --- NEW: FOLDER-BASED GIF ENGINE (UPDATED FOR WEBP) 🎥 ---
+# --- FOLDER-BASED GIF ENGINE ---
 def show_sass_gif(folder_name):
-    """
-    Looks inside the specific subfolder (e.g., 'gifs/bad_math') 
-    and picks a random GIF or WEBP.
-    """
     target_folder = os.path.join(GIF_DIR, folder_name)
-    
-    if not os.path.exists(target_folder):
-        return # Folder doesn't exist, skip it
-    
-    # Find all gifs in that folder
+    if not os.path.exists(target_folder): return
     all_files = os.listdir(target_folder)
-    
-    # UPDATED: Now accepts .webp files too!
     valid_images = [f for f in all_files if f.lower().endswith(('.gif', '.png', '.jpg', '.jpeg', '.webp'))]
-    
     if valid_images:
         chosen = random.choice(valid_images)
         st.image(os.path.join(target_folder, chosen), width=400)
@@ -154,61 +143,16 @@ st.set_page_config(page_title="The Burn Book", page_icon="💋", layout="wide")
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Indie+Flower&family=Montserrat:wght@400;700&display=swap');
-
-    /* MAIN THEME: PINK & WHITE */
-    .stApp { 
-        background-color: #FFF0F5; 
-        color: #000000; 
-        font-family: 'Montserrat', sans-serif;
-    }
-    
-    /* BURN BOOK HEADERS */
-    h1, h2, h3 { 
-        color: #D81B60 !important; 
-        font-family: 'Indie Flower', cursive !important; 
-        font-weight: bold;
-        letter-spacing: 1px;
-    }
-    
-    /* BUTTONS */
-    .stButton>button {
-        background-color: #E91E63;
-        color: white;
-        border-radius: 0px;
-        border: 2px solid black;
-        font-family: 'Indie Flower', cursive;
-        font-size: 20px;
-    }
-    .stButton>button:hover {
-        background-color: #FF69B4;
-        border: 2px dashed black;
-    }
-
-    /* CARDS */
-    .history-card { 
-        background-color: white; 
-        padding: 15px; 
-        border: 2px solid #E91E63;
-        margin-bottom: 8px; 
-        color: black;
-        font-family: 'Indie Flower', cursive;
-    }
+    .stApp { background-color: #FFF0F5; color: #000000; font-family: 'Montserrat', sans-serif; }
+    h1, h2, h3 { color: #D81B60 !important; font-family: 'Indie Flower', cursive !important; font-weight: bold; letter-spacing: 1px; }
+    .stButton>button { background-color: #E91E63; color: white; border-radius: 0px; border: 2px solid black; font-family: 'Indie Flower', cursive; font-size: 20px; }
+    .stButton>button:hover { background-color: #FF69B4; border: 2px dashed black; }
+    .history-card { background-color: white; padding: 15px; border: 2px solid #E91E63; margin-bottom: 8px; color: black; font-family: 'Indie Flower', cursive; }
     .pos { border-left: 10px solid #00cc00; }
     .neg { border-left: 10px solid #ff4b4b; }
-    
-    /* TABS */
     .stTabs [data-baseweb="tab-list"] { gap: 5px; }
-    .stTabs [data-baseweb="tab"] {
-        background-color: white;
-        border: 2px solid #E91E63;
-        color: black;
-        font-family: 'Indie Flower', cursive;
-        font-size: 18px;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #E91E63;
-        color: white;
-    }
+    .stTabs [data-baseweb="tab"] { background-color: white; border: 2px solid #E91E63; color: black; font-family: 'Indie Flower', cursive; font-size: 18px; }
+    .stTabs [aria-selected="true"] { background-color: #E91E63; color: white; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -252,7 +196,7 @@ else:
         if firm_sub_nav == "📊 The Table":
             col1, col2 = st.columns([1, 2])
             with col1:
-                selected_client = st.selectbox("Who is sitting with us?", existing_clients) if existing_clients else None
+                selected_client = st.selectbox("Who is sitting with us?", existing_clients, key="dash_client_select") if existing_clients else None
             
             if selected_client:
                 client_df = df[df["Client"] == selected_client]
@@ -288,10 +232,10 @@ else:
         elif firm_sub_nav == "📝 New Recruit":
             st.subheader("Plastic Onboarding")
             with st.form("onboarding_form"):
-                new_name = st.text_input("1. Name (Are they cool?)")
+                new_name = st.text_input("1. Name (Are they cool?)", key="new_client_name")
                 col_q1, col_q2 = st.columns(2)
-                with col_q1: new_goal = st.number_input("Savings Goal ($)", value=100.0)
-                with col_q2: new_freq = st.selectbox("Frequency", ["Weekly", "Bi-Weekly", "Whenever"])
+                with col_q1: new_goal = st.number_input("Savings Goal ($)", value=100.0, key="new_client_goal")
+                with col_q2: new_freq = st.selectbox("Frequency", ["Weekly", "Bi-Weekly", "Whenever"], key="new_client_freq")
                 
                 if st.form_submit_button("Make them a Plastic"):
                     if new_name and new_name not in existing_clients:
@@ -307,14 +251,14 @@ else:
             if not existing_clients:
                 st.warning("No clients.")
             else:
-                c_client = st.selectbox("Client", existing_clients)
-                c_action = st.radio("Action", ["Deposit", "Loan (Gross)", "Penalty (Late)"], horizontal=True)
+                c_client = st.selectbox("Client", existing_clients, key="trans_client_select")
+                c_action = st.radio("Action", ["Deposit", "Loan (Gross)", "Penalty (Late)"], horizontal=True, key="trans_action_select")
                 
                 # DEPOSIT
                 if c_action == "Deposit":
-                    c_amount = st.number_input("Amount", value=10.00)
+                    c_amount = st.number_input("Amount", value=10.00, key="trans_deposit_amount")
                     st.write(f"**Mathletes Tryout:** 15% of ${c_amount}?")
-                    guess = st.number_input("Answer:", value=0.0)
+                    guess = st.number_input("Answer:", value=0.0, key="trans_deposit_guess")
                     if st.button("Secure the Bag"):
                         real_earn = round(c_amount * 0.15, 2)
                         client_save = c_amount - real_earn
@@ -332,7 +276,7 @@ else:
                 
                 # WITHDRAWAL
                 elif c_action == "Loan (Gross)":
-                    c_amount = st.number_input("Loan Amount", value=10.00)
+                    c_amount = st.number_input("Loan Amount", value=10.00, key="trans_loan_amount")
                     st.warning("⚠️ Warning: This will ruin their Piggy Bank status.")
                     if st.button("Give Loan"):
                         show_sass_gif("spent") 
@@ -342,11 +286,11 @@ else:
                 # PENALTY
                 elif c_action == "Penalty (Late)":
                     st.subheader("💀 Late Fee")
-                    days_late = st.number_input("Days Late", min_value=1, value=1)
+                    days_late = st.number_input("Days Late", min_value=1, value=1, key="trans_penalty_days")
                     total_fee = days_late * 5.00
                     
                     st.write(f"**Mathletes:** $5.00 x {days_late} days = ?")
-                    fee_guess = st.number_input("Your Calculation:", value=0.00)
+                    fee_guess = st.number_input("Your Calculation:", value=0.00, key="trans_penalty_guess")
                     
                     col_p1, col_p2 = st.columns(2)
                     with col_p1:
@@ -398,9 +342,9 @@ else:
                     if pig_pic: st.image(pig_pic, width=150)
             
             with st.expander("Edit Goals"):
-                e_goal = st.selectbox("Goal", goals_df["Name"])
-                new_n = st.text_input("New Name")
-                new_t = st.number_input("New Target", value=100.0)
+                e_goal = st.selectbox("Goal", goals_df["Name"], key="empire_edit_goal")
+                new_n = st.text_input("New Name", key="empire_edit_name")
+                new_t = st.number_input("New Target", value=100.0, key="empire_edit_target")
                 if st.button("Update Goal"):
                     idx = goals_df.index[goals_df['Name'] == e_goal].tolist()[0]
                     goals_df.at[idx, 'Name'] = new_n if new_n else e_goal
@@ -410,18 +354,18 @@ else:
 
         elif empire_nav == "💸 Money Mover":
             st.subheader("Move Money")
-            move_type = st.selectbox("Action", ["Deposit Cash (Gift)", "Shopping Spree", "Save to Goal", "Withdraw"])
-            amt = st.number_input("Amount", value=10.0)
+            move_type = st.selectbox("Action", ["Deposit Cash (Gift)", "Shopping Spree", "Save to Goal", "Withdraw"], key="empire_move_type")
+            amt = st.number_input("Amount", value=10.0, key="empire_move_amt")
             
             if move_type == "Deposit Cash (Gift)":
-                source = st.text_input("From who?", "Nana")
+                source = st.text_input("From who?", "Nana", key="empire_dep_source")
                 if st.button("Add Cash"):
                     save_personal_transaction("Income", source, amt, get_sass("gift"))
                     st.balloons()
                     show_sass_gif("saved") 
                     st.rerun()
             elif move_type == "Save to Goal":
-                goal = st.selectbox("To Goal", goals_df["Name"])
+                goal = st.selectbox("To Goal", goals_df["Name"], key="empire_save_goal")
                 if st.button("Save"):
                     if amt <= available_cash:
                         update_goal(goal, amt)
@@ -430,7 +374,7 @@ else:
                         show_sass_gif("saved") 
                     else: st.error("You have no money. Boo.")
             elif move_type == "Shopping Spree":
-                item = st.text_input("What did you buy?")
+                item = st.text_input("What did you buy?", key="empire_spend_item")
                 if st.button("Spend"):
                     if amt <= available_cash:
                         save_personal_transaction("Spending", item, amt, get_sass("spending"))
