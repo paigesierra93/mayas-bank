@@ -11,7 +11,7 @@ QUOTES_FILE = "quotes.csv"
 GOALS_FILE = "goals.csv"
 FACTS_FILE = "facts.csv"
 PIG_FILE = "pig_map.csv"
-GIF_DIR = "gifs"
+GIF_DIR = "gifs"  # The main folder
 
 # --- BANNER FILES ---
 EMPIRE_BANNER = "banner.png"
@@ -30,6 +30,9 @@ def load_personal_data():
     if not os.path.exists(PERSONAL_FILE):
         return pd.DataFrame(columns=["Date", "Category", "Item", "Amount", "Sass_Level"])
     return pd.read_csv(PERSONAL_FILE)
+
+def save_personal_data(df):
+    df.to_csv(PERSONAL_FILE, index=False)
 
 def load_goals():
     if not os.path.exists(GOALS_FILE):
@@ -147,9 +150,21 @@ st.markdown("""
     h1, h2, h3 { color: #D81B60 !important; font-family: 'Indie Flower', cursive !important; font-weight: bold; letter-spacing: 1px; }
     .stButton>button { background-color: #E91E63; color: white; border-radius: 0px; border: 2px solid black; font-family: 'Indie Flower', cursive; font-size: 20px; }
     .stButton>button:hover { background-color: #FF69B4; border: 2px dashed black; }
-    .history-card { background-color: white; padding: 15px; border: 2px solid #E91E63; margin-bottom: 8px; color: black; font-family: 'Indie Flower', cursive; }
+    
+    /* CARDS */
+    .history-card { 
+        background-color: white; 
+        padding: 15px; 
+        border: 2px solid #E91E63;
+        margin-bottom: 8px; 
+        color: black;
+        font-family: 'Indie Flower', cursive;
+        box-shadow: 3px 3px 0px #000;
+    }
     .pos { border-left: 10px solid #00cc00; }
     .neg { border-left: 10px solid #ff4b4b; }
+    .gold { border-left-color: #ffd700; }
+
     .stTabs [data-baseweb="tab-list"] { gap: 5px; }
     .stTabs [data-baseweb="tab"] { background-color: white; border: 2px solid #E91E63; color: black; font-family: 'Indie Flower', cursive; font-size: 18px; }
     .stTabs [aria-selected="true"] { background-color: #E91E63; color: white; }
@@ -354,9 +369,10 @@ else:
 
         elif empire_nav == "💸 Money Mover":
             st.subheader("Move Money")
-            move_type = st.selectbox("Action", ["Deposit Cash (Gift)", "Shopping Spree", "Save to Goal", "Withdraw"], key="empire_move_type")
+            move_type = st.selectbox("Action", ["Deposit Cash (Gift)", "Shopping Spree", "Save to Goal", "Withdraw from Goal"], key="empire_move_type")
             amt = st.number_input("Amount", value=10.0, key="empire_move_amt")
             
+            # 1. DEPOSIT
             if move_type == "Deposit Cash (Gift)":
                 source = st.text_input("From who?", "Nana", key="empire_dep_source")
                 if st.button("Add Cash"):
@@ -364,6 +380,8 @@ else:
                     st.balloons()
                     show_sass_gif("saved") 
                     st.rerun()
+            
+            # 2. SAVE TO GOAL
             elif move_type == "Save to Goal":
                 goal = st.selectbox("To Goal", goals_df["Name"], key="empire_save_goal")
                 if st.button("Save"):
@@ -372,17 +390,72 @@ else:
                         save_personal_transaction("Savings Transfer", f"Saved to {goal}", 0, get_sass("saving"))
                         st.balloons()
                         show_sass_gif("saved") 
+                        st.rerun()
                     else: st.error("You have no money. Boo.")
+            
+            # 3. SPENDING
             elif move_type == "Shopping Spree":
                 item = st.text_input("What did you buy?", key="empire_spend_item")
                 if st.button("Spend"):
                     if amt <= available_cash:
                         save_personal_transaction("Spending", item, amt, get_sass("spending"))
                         show_sass_gif("spent") 
+                        st.rerun()
                     else: st.error("Insufficient funds.")
 
+            # 4. WITHDRAW FROM GOAL (This was missing!)
+            elif move_type == "Withdraw from Goal":
+                goal = st.selectbox("From Goal", goals_df["Name"], key="empire_withdraw_goal")
+                if st.button("Withdraw to Cash"):
+                    goal_row = goals_df[goals_df["Name"] == goal].iloc[0]
+                    if amt > goal_row["Balance"]:
+                        st.error("You don't have that much saved!")
+                    else:
+                        update_goal(goal, -amt)
+                        save_personal_transaction("Early Withdrawal", f"Took from {goal}", 0, get_sass("early_withdraw"))
+                        show_sass_gif("early_withdraw")
+                        st.warning("Processed. Don't spend it all in one place.")
+                        st.rerun()
+
         elif empire_nav == "📜 The Burn Book":
-            st.dataframe(personal_df.sort_index(ascending=False), use_container_width=True)
+            st.write("### Your Personal Ledger")
+            
+            # HIDDEN EDITOR
+            with st.expander("✎ Edit Entries (Fix Mistakes)"):
+                edited_df = st.data_editor(personal_df, num_rows="dynamic", key="empire_editor")
+                if st.button("Save Changes"):
+                    save_personal_data(edited_df)
+                    st.success("Burn Book Updated.")
+                    st.rerun()
+            
+            st.markdown("---")
+            
+            # COLORFUL CARD FEED
+            if not personal_df.empty:
+                for index, row in personal_df.sort_index(ascending=False).iterrows():
+                    amt = row['Amount']
+                    css_class = "pos"  # Default Green (Fetch)
+                    display_amt = f"+${abs(amt):.2f}"
+                    
+                    if amt < 0:
+                        css_class = "neg" # Red (Gross)
+                        display_amt = f"-${abs(amt):.2f}"
+                    elif row['Category'] == "Reward":
+                        css_class = "gold"
+                        display_amt = f"+${abs(amt):.2f} (Reward)"
+                    
+                    st.markdown(f"""
+                    <div class="history-card {css_class}">
+                        <div style="display:flex; justify-content:space-between;">
+                            <strong>{row['Item']} ({row['Category']})</strong>
+                            <span>{row['Date']}</span>
+                        </div>
+                        <div style="font-size: 20px; font-weight: bold;">{display_amt}</div>
+                        <div style="font-style: italic; color: #888;">"{row['Sass_Level']}"</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("The book is empty. Go buy something.")
 
     # ==========================
     # TAB 3: THE RULES
