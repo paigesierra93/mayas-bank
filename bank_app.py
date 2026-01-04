@@ -2,28 +2,41 @@ import streamlit as st
 import pandas as pd
 import os
 import random
+import base64
+import re
 from datetime import datetime
+import google.generativeai as genai
+import warnings
+
+# --- 1. SILENCE WARNINGS ---
+warnings.filterwarnings("ignore")
+os.environ["STREAMLIT_SILENCE_DEPRECATION_WARNING"] = "1"
+
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Mathletes & Plastics", page_icon="💋", layout="wide")
 
 # --- FILE & FOLDER SETUP ---
 CLIENT_FILE = "ledger.csv"
 PERSONAL_FILE = "my_budget.csv"
-QUOTES_FILE = "quotes.csv"
 GOALS_FILE = "goals.csv"
-FACTS_FILE = "facts.csv"
-PIG_FILE = "pig_map.csv"
-GIF_DIR = "gifs"  # The main folder
+QUOTES_FILE = "quotes.csv"
+GIF_DIR = "gifs"
 
-# --- BANNER FILES ---
-EMPIRE_BANNER = "banner.png"
-FIRM_BANNER = "firm_banner.png"
+# --- IMAGE HELPERS ---
+def get_base64_image(image_path):
+    if os.path.exists(image_path):
+        with open(image_path, "rb") as img_file: return base64.b64encode(img_file.read()).decode()
+    alt_path = image_path.replace(".jpg", ".jpeg")
+    if os.path.exists(alt_path):
+        with open(alt_path, "rb") as img_file: return base64.b64encode(img_file.read()).decode()
+    return ""
 
 # --- DATA LOADING ---
 def load_client_data():
     if not os.path.exists(CLIENT_FILE):
-        return pd.DataFrame(columns=["Date", "Client", "Type", "Amount", "Note", "Savings_Balance", "Niece_Earnings", "Target", "Frequency"])
+        return pd.DataFrame(columns=["Date", "Client", "Type", "Amount", "Note", "Savings_Balance", "Niece_Earnings", "Target"])
     df = pd.read_csv(CLIENT_FILE)
     if "Target" not in df.columns: df["Target"] = 0.0
-    if "Frequency" not in df.columns: df["Frequency"] = ""
     return df
 
 def load_personal_data():
@@ -31,80 +44,26 @@ def load_personal_data():
         return pd.DataFrame(columns=["Date", "Category", "Item", "Amount", "Sass_Level"])
     return pd.read_csv(PERSONAL_FILE)
 
-def save_personal_data(df):
-    df.to_csv(PERSONAL_FILE, index=False)
-
 def load_goals():
     if not os.path.exists(GOALS_FILE):
-        data = {
-            "Goal_ID": ["Goal 1", "Goal 2", "Goal 3"],
-            "Name": ["Spring Fling Dress", "College", "Pink Jeep"],
-            "Target": [1000.0, 5000.0, 300.0],
-            "Balance": [0.0, 0.0, 0.0]
-        }
+        data = {"Name": ["Spring Fling Dress", "College", "Pink Jeep"], "Target": [1000.0, 5000.0, 300.0], "Balance": [0.0, 0.0, 0.0]}
         df = pd.DataFrame(data)
         df.to_csv(GOALS_FILE, index=False)
         return df
     return pd.read_csv(GOALS_FILE)
 
 def get_daily_content(file_path, column_name, fallback):
-    if not os.path.exists(file_path):
-        return fallback
+    if not os.path.exists(file_path): return fallback
     try:
         df = pd.read_csv(file_path)
-        day_of_year = datetime.now().timetuple().tm_yday
-        index = (day_of_year - 1) % len(df)
-        return df.iloc[index][column_name]
-    except:
-        return fallback
+        day = datetime.now().timetuple().tm_yday
+        return df.iloc[(day - 1) % len(df)][column_name]
+    except: return fallback
 
-# --- HELPER: SMART BANNER ---
-def show_smart_banner(base_name, fallback_title):
-    possible_files = [f"{base_name}.png", f"{base_name}.PNG", f"{base_name}.jpg", f"{base_name}.JPG"]
-    found = False
-    for f in possible_files:
-        if os.path.exists(f):
-            st.image(f, use_column_width=True)
-            found = True
-            break
-    if not found:
-        st.markdown(f"<h1 style='color:#D81B60; font-family: Brush Script MT, cursive;'>{fallback_title}</h1>", unsafe_allow_html=True)
-
-# --- PIGGY BANK LOGIC ---
-def get_pig_image(current_percent):
-    if not os.path.exists(PIG_FILE):
-        return None
-    try:
-        df = pd.read_csv(PIG_FILE)
-        df = df.sort_values(by="Threshold")
-        selected_image = df.iloc[0]["Image_File"]
-        for index, row in df.iterrows():
-            if current_percent >= row["Threshold"]:
-                selected_image = row["Image_File"]
-        return selected_image
-    except:
-        return None
-
-# --- SAVE FUNCTIONS ---
-def save_client_transaction(client_name, type, amount, note, savings_change, earnings_change, target=0.0, freq=""):
-    df = load_client_data()
-    client_data = df[df["Client"] == client_name]
-    current_savings = client_data.iloc[-1]["Savings_Balance"] if not client_data.empty else 0.0
-    new_savings = current_savings + savings_change
-    
-    new_entry = pd.DataFrame([{
-        "Date": datetime.now().strftime("%Y-%m-%d %H:%M"), 
-        "Client": client_name, "Type": type, 
-        "Amount": amount, "Note": note, 
-        "Savings_Balance": new_savings, "Niece_Earnings": earnings_change,
-        "Target": target, "Frequency": freq
-    }])
-    df = pd.concat([df, new_entry], ignore_index=True)
-    df.to_csv(CLIENT_FILE, index=False)
-
+# --- CORE LOGIC ---
 def save_personal_transaction(category, item, amount, sass):
     df = load_personal_data()
-    if category in ["Spending", "Withdraw from Savings", "Early Withdrawal"]:
+    if category in ["Spending", "Withdrawal", "Transfer"] and amount > 0: 
         amount = -amount
     new_entry = pd.DataFrame([{
         "Date": datetime.now().strftime("%Y-%m-%d %H:%M"), "Category": category, 
@@ -113,362 +72,379 @@ def save_personal_transaction(category, item, amount, sass):
     df = pd.concat([df, new_entry], ignore_index=True)
     df.to_csv(PERSONAL_FILE, index=False)
 
+def save_client_transaction(client_name, type, amount, note, savings_change, earnings_change, target=0.0):
+    df = load_client_data()
+    old_bal = 0.0
+    client_rows = df[df["Client"] == client_name]
+    if not client_rows.empty: old_bal = client_rows.iloc[-1]["Savings_Balance"]
+    
+    new_entry = pd.DataFrame([{
+        "Date": datetime.now().strftime("%Y-%m-%d %H:%M"), 
+        "Client": client_name, 
+        "Type": type, 
+        "Amount": amount, 
+        "Note": note, 
+        "Savings_Balance": round(old_bal + savings_change, 2), 
+        "Niece_Earnings": earnings_change, 
+        "Target": target
+    }])
+    df = pd.concat([df, new_entry], ignore_index=True)
+    df.to_csv(CLIENT_FILE, index=False)
+    
+    if earnings_change > 0:
+        save_personal_transaction("Income", f"Business: {client_name}", earnings_change, "Hustle")
+
 def update_goal(goal_name, amount_change):
     df = load_goals()
-    idx = df.index[df['Name'] == goal_name].tolist()[0]
-    df.at[idx, 'Balance'] += amount_change
-    df.to_csv(GOALS_FILE, index=False)
+    matches = [name for name in df['Name'] if goal_name.lower() in name.lower()]
+    if matches:
+        target_goal = matches[0]
+        idx = df.index[df['Name'] == target_goal].tolist()[0]
+        df.at[idx, 'Balance'] += amount_change
+        df.to_csv(GOALS_FILE, index=False)
+        return target_goal
+    return None
 
-# --- FOLDER-BASED GIF ENGINE ---
-def show_sass_gif(folder_name):
-    target_folder = os.path.join(GIF_DIR, folder_name)
-    if not os.path.exists(target_folder): return
-    all_files = os.listdir(target_folder)
-    valid_images = [f for f in all_files if f.lower().endswith(('.gif', '.png', '.jpg', '.jpeg', '.webp'))]
-    if valid_images:
-        chosen = random.choice(valid_images)
-        st.image(os.path.join(target_folder, chosen), width=400)
-
-# --- MEAN GIRLS TEXT SASS ENGINE ---
-def get_sass(mood):
-    if mood == "good_math": return random.choice(["You go, Glen Coco! 4 for you!", "The limit does not exist!", "That is so fetch.", "Grool. (Great + Cool)."])
-    elif mood == "bad_math": return random.choice(["Stop trying to make that math happen.", "You can't sit with us.", "Social suicide.", "Boo, you whore."])
-    elif mood == "spending": return random.choice(["Get in loser, we're going shopping.", "Is butter a carb?", "I'm a cool mom.", "Whatever, I'm getting cheese fries."])
-    elif mood == "saving": return random.choice(["That is so fetch.", "You're like, really pretty.", "On Wednesdays we wear pink (and save money)."])
-    elif mood == "goal_hit": return "Spring Fling Queen! 👑"
-    elif mood == "early_withdraw": return "She doesn't even go here!"
-    elif mood == "refund": return "We love a return policy."
-    elif mood == "gift": return random.choice(["Is your muffin buttered?", "I love her, she's like a Martian."])
-
-# --- CONFIG & STYLE (MEAN GIRLS THEME) ---
-st.set_page_config(page_title="The Burn Book", page_icon="💋", layout="wide")
-
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Indie+Flower&family=Montserrat:wght@400;700&display=swap');
-    .stApp { background-color: #FFF0F5; color: #000000; font-family: 'Montserrat', sans-serif; }
-    h1, h2, h3 { color: #D81B60 !important; font-family: 'Indie Flower', cursive !important; font-weight: bold; letter-spacing: 1px; }
-    .stButton>button { background-color: #E91E63; color: white; border-radius: 0px; border: 2px solid black; font-family: 'Indie Flower', cursive; font-size: 20px; }
-    .stButton>button:hover { background-color: #FF69B4; border: 2px dashed black; }
+# --- PARSING ---
+def process_plastics_command(text):
+    text = text.lower()
+    match_spend = re.search(r'(spend|bought|buy|spent)\s?\$?(\d+(\.\d+)?)\s?(on|for)?\s(.+)', text)
+    if match_spend:
+        amt = float(match_spend.group(2))
+        item = match_spend.group(5)
+        pdf = load_personal_data()
+        cash = pdf["Amount"].sum()
+        if amt > cash: return False, f"Insufficient funds to spend ${amt}."
+        save_personal_transaction("Spending", item, amt, "Chat Command")
+        return True, f"Logged purchase: {item} for ${amt}."
     
-    /* CARDS */
-    .history-card { 
-        background-color: white; 
-        padding: 15px; 
-        border: 2px solid #E91E63;
-        margin-bottom: 8px; 
-        color: black;
-        font-family: 'Indie Flower', cursive;
-        box-shadow: 3px 3px 0px #000;
-    }
-    .pos { border-left: 10px solid #00cc00; }
-    .neg { border-left: 10px solid #ff4b4b; }
-    .gold { border-left-color: #ffd700; }
+    match_inc = re.search(r'(add|got|deposit|income)\s?\$?(\d+(\.\d+)?)\s?(from)?\s(.+)', text)
+    if match_inc:
+        amt = float(match_inc.group(2))
+        source = match_inc.group(5)
+        save_personal_transaction("Income", source, amt, "Chat Command")
+        return True, f"Added ${amt} from {source}."
+        
+    match_save = re.search(r'(save|move|transfer)\s?\$?(\d+(\.\d+)?)\s?(to|for)\s(.+)', text)
+    if match_save:
+        amt = float(match_save.group(2))
+        goal_input = match_save.group(5)
+        pdf = load_personal_data()
+        cash = pdf["Amount"].sum()
+        if amt > cash: return False, "Insufficient funds."
+        updated_name = update_goal(goal_input, amt)
+        if updated_name:
+            save_personal_transaction("Transfer", f"To {updated_name}", amt, "Chat Command")
+            return True, f"Moved ${amt} to {updated_name}."
+    return False, None
 
-    .stTabs [data-baseweb="tab-list"] { gap: 5px; }
-    .stTabs [data-baseweb="tab"] { background-color: white; border: 2px solid #E91E63; color: black; font-family: 'Indie Flower', cursive; font-size: 18px; }
-    .stTabs [aria-selected="true"] { background-color: #E91E63; color: white; }
+def process_mathletes_command(text):
+    text = text.lower()
+    match_new = re.search(r'new client\s(\w+)\sgoal\s\$?(\d+)', text)
+    if match_new:
+        name = match_new.group(1).capitalize(); goal = float(match_new.group(2))
+        save_client_transaction(name, "Joined", 0, "Chat", 0, 0, goal)
+        return True, f"Created file: {name}."
+        
+    df = load_client_data()
+    existing_clients = [c.lower() for c in df["Client"].unique()]
+    target = None
+    for c in existing_clients:
+        if c in text: target = df[df["Client"].str.lower() == c].iloc[0]["Client"]; break
+    
+    if not target: return False, None
+    
+    match_dep = re.search(r'(deposit|add)\s\$?(\d+(\.\d+)?)', text)
+    if match_dep:
+        amt = float(match_dep.group(2))
+        real = round(amt*0.85, 2); profit = round(amt*0.15, 2)
+        save_client_transaction(target, "Deposit", amt, "Chat", real, profit)
+        return True, f"Deposited ${amt} for {target}."
+        
+    match_pen = re.search(r'(charge|penalty)\s\$?(\d+(\.\d+)?)', text)
+    if match_pen:
+        amt = float(match_pen.group(2))
+        save_client_transaction(target, "Penalty", amt, "Chat", 0, amt)
+        return True, f"Charged ${amt} penalty to {target}."
+        
+    return False, None
+
+# --- GIFS ---
+def show_sass_gif(category):
+    target = os.path.join(GIF_DIR, category)
+    if os.path.exists(target):
+        files = [f for f in os.listdir(target) if f.lower().endswith(('.gif', '.jpg', '.png'))]
+        if files: st.image(os.path.join(target, random.choice(files)), width=300)
+
+# --- AI BRAIN ---
+def get_ai_reply(persona, prompt, context="", action_report=""):
+    if not st.session_state.api_key: return "Enter the API key in the sidebar first."
+    genai.configure(api_key=st.session_state.api_key)
+    model_candidates = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    
+    if "Regina" in persona:
+        system_prompt = f"""You are REGINA GEORGE. CONTEXT: {context}. ACTION REPORT: "{action_report}". USER SAYS: "{prompt}". 
+        INSTRUCTIONS: If action done, complain about labor but confirm. Judge spending. Be sassy/mean. Short."""
+    else:
+        system_prompt = f"""You are KEVIN GNAPOOR. CONTEXT: {context}. ACTION REPORT: "{action_report}". USER SAYS: "{prompt}". 
+        INSTRUCTIONS: If action done, confirm with math slang. If question, give 1-sentence math lesson. Short."""
+
+    for m in model_candidates:
+        try:
+            model = genai.GenerativeModel(m)
+            return model.generate_content(system_prompt).text
+        except: continue
+    return "Internet broken."
+
+# --- IMAGES ---
+bg_menu = get_base64_image("menu_background.jpg")  
+bg_math = get_base64_image("north_shore.jpg") 
+bg_plastic = get_base64_image("burn_book_background.png")
+
+# --- CSS ---
+st.markdown(f"""
+<style>
+    [data-testid="stSidebar"] {{
+        background-image: linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.3)), url("data:image/jpeg;base64,{bg_menu}");
+        background-size: cover; background-position: center; border-right: 3px solid black;
+    }}
+    [data-testid="stSidebar"] * {{ color: white !important; text-shadow: 2px 2px 0px black; font-weight: 900; }}
+    .math-container {{
+        background-image: linear-gradient(rgba(255, 249, 196, 0.9), rgba(255, 249, 196, 0.9)), url("data:image/jpeg;base64,{bg_math}");
+        background-size: cover; border: 4px solid #1A237E; padding: 20px; border-radius: 10px; color: black;
+    }}
+    .plastic-container {{
+        background-image: linear-gradient(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.9)), url("data:image/png;base64,{bg_plastic}");
+        background-size: cover; border: 4px solid black; padding: 20px; border-radius: 0px; color: black;
+    }}
+    .bubble {{ padding: 12px 18px; border-radius: 20px; max-width: 80%; font-family: 'Verdana', sans-serif; font-size: 15px; margin-bottom: 8px; }}
+    .bubble-math {{ background: #E8EAF6; border: 2px solid #1A237E; color: black; float: left; clear: both; }}
+    .bubble-plastic {{ background: #FCE4EC; border: 2px solid #D81B60; color: black; float: left; clear: both; }}
+    .bubble-user {{ background: #333; color: white; border: 2px solid black; float: right; clear: both; text-align: right; }}
+    .chat-row {{ overflow: hidden; margin-bottom: 10px; }}
 </style>
 """, unsafe_allow_html=True)
 
-# --- INTRO LOGIC ---
-if 'intro_seen' not in st.session_state:
-    st.session_state['intro_seen'] = False
+# --- STATE ---
+if 'api_key' not in st.session_state: st.session_state.api_key = ""
+if 'math_history' not in st.session_state: st.session_state.math_history = [{"role": "assistant", "content": "Kevin G here. Stats are looking tight."}]
+if 'plastic_history' not in st.session_state: st.session_state.plastic_history = [{"role": "assistant", "content": "Get in loser, we're doing finances."}]
+if 'math_tut_step' not in st.session_state: st.session_state.math_tut_step = 0
+if 'plastic_tut_step' not in st.session_state: st.session_state.plastic_tut_step = 0
 
-if not st.session_state['intro_seen']:
-    is_first_run = not os.path.exists(CLIENT_FILE)
-    if is_first_run:
-        st.balloons()
-        st.title("💋 Get in Loser, We're Doing Accounting.")
-        st.write("Welcome to the Plastics. This is where you run the school.")
-        if st.button("🚀 Open the Burn Book"):
-            st.session_state['intro_seen'] = True
-            st.rerun()
-    else:
-        daily_fact = get_daily_content(FACTS_FILE, "Daily Gossip", "On Wednesdays we wear pink.")
-        st.markdown(f"### 💋 Gossip: {daily_fact}")
-        if st.button("✨ Enter World Domination ✨"):
-            st.session_state['intro_seen'] = True
-            st.rerun()
+# --- SIDEBAR ---
+with st.sidebar:
+    st.markdown("<h1>WELCOME,<br>TO MAYA'S<br>BURN BOOK</h1>", unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown(f"**Today's Gossip:**\n\n_{get_daily_content(QUOTES_FILE, 'Quote', 'On Wednesdays we wear pink.')}_")
+    st.markdown("---")
+    user_key = st.text_input("Enter Password (API)", type="password")
+    if user_key: st.session_state.api_key = user_key
 
-# --- MAIN NAVIGATION ---
-else:
-    tab_firm, tab_empire, tab_help = st.tabs(["💅 The Plastics (Clients)", "👑 World Domination", "📕 The Rules"])
+# --- SIDEBAR ---
+with st.sidebar:
+    st.markdown("<h1>WELCOME,<br>TO MAYA'S<br>BURN BOOK</h1>", unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown(f"**Today's Gossip:**\n\n_{get_daily_content(QUOTES_FILE, 'Quote', 'On Wednesdays we wear pink.')}_")
+    st.markdown("---")
+    user_key = st.text_input("Enter Password (API)", type="password")
+    if user_key: st.session_state.api_key = user_key
 
-    # ==========================
-    # TAB 1: THE PLASTICS (Clients)
-    # ==========================
-    with tab_firm:
-        show_smart_banner("firm_banner", "The Plastics")
-        
-        firm_sub_nav = st.radio("Menu:", ["📊 The Table", "📝 New Recruit", "💸 Transaction"], horizontal=True, label_visibility="collapsed")
-        st.markdown("---")
+    # ==========================================
+    # PASTE NEW CODE HERE (Indented!) 👇
+    # ==========================================
+    st.divider()
+    st.header("💾 Save Bank Records")
 
+    # 1. LOAD BUTTON (Resume Previous Work)
+    uploaded_ledger = st.file_uploader("Upload 'ledger.csv' to resume:", type=['csv'])
+    if uploaded_ledger:
+        import pandas as pd
+        # Read the CSV and save it to the system
+        df = pd.read_csv(uploaded_ledger)
+        df.to_csv('ledger.csv', index=False)
+        st.success("✅ Ledger Loaded!")
+
+    # 2. SAVE BUTTON (Download Current Work)
+    import os
+    # Check if the file exists so the app doesn't crash on the first run
+    if os.path.exists("ledger.csv"):
+        with open("ledger.csv", "rb") as file:
+            st.download_button(
+                label="⬇️ Download Ledger",
+                data=file,
+                file_name="ledger.csv",
+                mime="text/csv"
+            )
+    # ==========================================
+
+# --- END OF SIDEBAR ---
+# (The code below goes back to the far left, no indentation)
+
+if not st.session_state.api_key:
+    st.markdown("<div style='text-align:center; margin-top:20%; font-family:Arial Black; font-size: 50px;'>LOCKED.</div>", unsafe_allow_html=True)
+    st.stop()
+    
+if not st.session_state.api_key:
+    st.markdown("<div style='text-align:center; margin-top:20%; font-family:Arial Black; font-size: 50px;'>LOCKED.</div>", unsafe_allow_html=True)
+    st.stop()
+
+if not st.session_state.api_key:
+    st.markdown("<div style='text-align:center; margin-top:20%; font-family:Arial Black; font-size: 50px;'>LOCKED.</div>", unsafe_allow_html=True)
+    st.stop()
+
+# ==========================================
+# MAIN APP
+# ==========================================
+tab_math, tab_plastic = st.tabs(["📘 Mathletes", "💖 The Plastics"])
+
+# --- TAB 1: MATHLETES ---
+with tab_math:
+    st.markdown('<div class="math-container">', unsafe_allow_html=True)
+    st.markdown('<h2 style="color:#1A237E; text-align:right; border-bottom:3px solid #1A237E;">MATHLETES: CLIENT MANAGEMENT</h2>', unsafe_allow_html=True)
+    
+    # TUTORIAL LOGIC
+    if st.session_state.math_tut_step == 1:
+        st.info("🎓 TUTORIAL: Step 1")
+        if st.button("Next >"): 
+            st.session_state.math_history.append({"role": "assistant", "content": "Yo, check the CHAT below. You can tell me 'Deposit 50 for Mom' or 'New Client Sam'. I handle the math."})
+            st.session_state.math_tut_step = 2; st.rerun()
+    elif st.session_state.math_tut_step == 2:
+        st.info("🎓 TUTORIAL: Step 2")
+        if st.button("Next >"): 
+            st.session_state.math_history.append({"role": "assistant", "content": "Below the chat are the TOOLS. Use 'New File' to add people. Use 'Audit' to charge penalties."})
+            st.session_state.math_tut_step = 3; st.rerun()
+    elif st.session_state.math_tut_step == 3:
+        st.info("🎓 TUTORIAL: Finished")
+        if st.button("End Class"): 
+            st.session_state.math_history.append({"role": "assistant", "content": "Lesson over. Get back to work."})
+            st.session_state.math_tut_step = 0; st.rerun()
+
+    # CHAT
+    with st.container(height=300):
+        for msg in st.session_state.math_history:
+            css = "bubble-user" if msg["role"] == "user" else "bubble-math"
+            st.markdown(f'<div class="chat-row"><div class="bubble {css}">{msg["content"]}</div></div>', unsafe_allow_html=True)
+
+    if prompt := st.chat_input("Ask Kevin...", key="m_in"):
+        st.session_state.math_history.append({"role": "user", "content": prompt})
+        success, report = process_mathletes_command(prompt)
+        if success: show_sass_gif("good")
         df = load_client_data()
-        existing_clients = df["Client"].unique().tolist() if not df.empty else []
-        
-        # A. DASHBOARD
-        if firm_sub_nav == "📊 The Table":
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                selected_client = st.selectbox("Who is sitting with us?", existing_clients, key="dash_client_select") if existing_clients else None
-            
-            if selected_client:
-                client_df = df[df["Client"] == selected_client]
-                bal = client_df.iloc[-1]["Savings_Balance"] if not client_df.empty else 0.0
-                revenue = df["Niece_Earnings"].sum()
-                
-                try: target = client_df["Target"].max()
-                except: target = 0
-                
-                col_a, col_b = st.columns(2)
-                col_a.metric(f"{selected_client}'s Stash", f"${bal:,.2f}")
-                col_b.metric("Your Cut (15%)", f"${revenue:,.2f}")
-                
-                st.markdown("### Progress")
-                if target > 0:
-                    percent = bal / target
-                    st.progress(min(percent, 1.0))
-                    st.caption(f"Goal: ${target:,.2f} | Current: ${bal:,.2f}")
-                    pig_pic = get_pig_image(percent * 100)
-                    if pig_pic: st.image(pig_pic, width=150)
-                    if percent >= 1.0: 
-                        show_sass_gif("good_math") 
-                        st.success("Is that a new goal? It's really pretty. 🎉")
-                else:
-                    st.info("No goal. Social suicide.")
-                
-                st.markdown("### The Burn Book (History)")
-                st.dataframe(client_df[["Date", "Type", "Amount", "Note", "Savings_Balance"]].sort_index(ascending=False), use_container_width=True)
-            else:
-                st.info("No clients yet. Add a Recruit!")
+        context = f"Clients: {df['Client'].unique().tolist()}. Revenue: ${df['Niece_Earnings'].sum():.2f}."
+        reply = get_ai_reply("Kevin Gnapoor", prompt, context, report if success else "")
+        st.session_state.math_history.append({"role": "assistant", "content": reply})
+        st.rerun()
 
-        # B. ADD CLIENT
-        elif firm_sub_nav == "📝 New Recruit":
-            st.subheader("Plastic Onboarding")
-            with st.form("onboarding_form"):
-                new_name = st.text_input("1. Name (Are they cool?)", key="new_client_name")
-                col_q1, col_q2 = st.columns(2)
-                with col_q1: new_goal = st.number_input("Savings Goal ($)", value=100.0, key="new_client_goal")
-                with col_q2: new_freq = st.selectbox("Frequency", ["Weekly", "Bi-Weekly", "Whenever"], key="new_client_freq")
-                
-                if st.form_submit_button("Make them a Plastic"):
-                    if new_name and new_name not in existing_clients:
-                        save_client_transaction(new_name, "Open", 0, "Joined the Clique", 0, 0, target=new_goal, freq=new_freq)
-                        st.success(f"{new_name} can sit with us.")
-                        show_sass_gif("burn_book") 
-                        st.balloons()
-                    elif new_name in existing_clients:
-                        st.error("She doesn't even go here! (Already exists)")
+    st.markdown("---")
+    
+    c1, c2, c3, c4, c5 = st.columns(5)
+    if c1.button("🆕 New File"): st.session_state.m_mode = "New"
+    if c2.button("📂 Audit"): st.session_state.m_mode = "Audit"
+    if c3.button("📜 Logs"): st.session_state.m_mode = "View"
+    if c4.button("🎓 School"): 
+        st.session_state.m_mode = "None"
+        st.session_state.math_tut_step = 1
+        st.session_state.math_history.append({"role": "assistant", "content": "Alright class, listen up. Welcome to the Mathletes Audit Log tutorial."})
+        st.rerun()
+    if c5.button("🔄 Clear"): st.session_state.m_mode = "None"
+    
+    mode = getattr(st.session_state, 'm_mode', 'None')
+    if mode == "New":
+        with st.form("new_c"):
+            name = st.text_input("Name"); goal = st.number_input("Goal", 100.0)
+            if st.form_submit_button("Create"):
+                save_client_transaction(name, "Joined", 0, "Chat", 0, 0, goal)
+                st.success("Created"); show_sass_gif("save")
+    elif mode == "Audit":
+        df = load_client_data(); clients = df["Client"].unique()
+        if len(clients) > 0:
+            target = st.selectbox("Client", clients)
+            ac1, ac2, ac3 = st.columns(3)
+            if ac1.button("Deposit"): 
+                val = st.number_input("Amt", 0.01); 
+                if st.button("Go"): save_client_transaction(target, "Deposit", val, "Man", val*0.85, val*0.15); st.success("Done")
+            if ac2.button("Penalty"):
+                val = st.number_input("Fee", 5.0); 
+                if st.button("Charge"): save_client_transaction(target, "Penalty", val, "Man", 0, val); st.success("Done")
+    elif mode == "View":
+        df = load_client_data(); target = st.selectbox("View", df["Client"].unique())
+        st.dataframe(df[df["Client"]==target])
 
-        # C. TRANSACTION
-        elif firm_sub_nav == "💸 Transaction":
-            if not existing_clients:
-                st.warning("No clients.")
-            else:
-                c_client = st.selectbox("Client", existing_clients, key="trans_client_select")
-                c_action = st.radio("Action", ["Deposit", "Loan (Gross)", "Penalty (Late)"], horizontal=True, key="trans_action_select")
-                
-                # DEPOSIT
-                if c_action == "Deposit":
-                    c_amount = st.number_input("Amount", value=10.00, key="trans_deposit_amount")
-                    st.write(f"**Mathletes Tryout:** 15% of ${c_amount}?")
-                    guess = st.number_input("Answer:", value=0.0, key="trans_deposit_guess")
-                    if st.button("Secure the Bag"):
-                        real_earn = round(c_amount * 0.15, 2)
-                        client_save = c_amount - real_earn
-                        note = "Deposit (So Fetch)" if abs(guess - real_earn) < 0.01 else "Deposit (Fixed)"
-                        
-                        if abs(guess - real_earn) < 0.01: 
-                            st.balloons()
-                            show_sass_gif("good_math") 
-                            st.success(get_sass("good_math"))
-                        else:
-                            show_sass_gif("bad_math") 
-                            st.error(get_sass("bad_math"))
-                        
-                        save_client_transaction(c_client, "Deposit", c_amount, note, client_save, real_earn)
-                
-                # WITHDRAWAL
-                elif c_action == "Loan (Gross)":
-                    c_amount = st.number_input("Loan Amount", value=10.00, key="trans_loan_amount")
-                    st.warning("⚠️ Warning: This will ruin their Piggy Bank status.")
-                    if st.button("Give Loan"):
-                        show_sass_gif("spent") 
-                        save_client_transaction(c_client, "Withdrawal", c_amount, "Client Loan", -c_amount, 0)
-                        st.success("Processed. Whatever, I'm getting cheese fries.")
-                
-                # PENALTY
-                elif c_action == "Penalty (Late)":
-                    st.subheader("💀 Late Fee")
-                    days_late = st.number_input("Days Late", min_value=1, value=1, key="trans_penalty_days")
-                    total_fee = days_late * 5.00
-                    
-                    st.write(f"**Mathletes:** $5.00 x {days_late} days = ?")
-                    fee_guess = st.number_input("Your Calculation:", value=0.00, key="trans_penalty_guess")
-                    
-                    col_p1, col_p2 = st.columns(2)
-                    with col_p1:
-                        if st.button("Charge it 💅"):
-                            if abs(fee_guess - total_fee) < 0.01:
-                                save_client_transaction(c_client, "Penalty", total_fee, "Late Fee", 0, total_fee)
-                                show_sass_gif("burn_book") 
-                                st.success("The limit does not exist!")
-                            else:
-                                st.error("Wrong math. Charged anyway.")
-                                show_sass_gif("bad_math") 
-                                save_client_transaction(c_client, "Penalty", total_fee, "Late Fee", 0, total_fee)
-                    with col_p2:
-                        if st.button("Waive it (Be Nice) 😇"):
-                            save_client_transaction(c_client, "Waived", 0, "Fee Waived", 0, 0)
-                            st.balloons()
-                            show_sass_gif("good_math") 
-                            st.success("You are a cool mom.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    # ==========================
-    # TAB 2: WORLD DOMINATION (Empire)
-    # ==========================
-    with tab_empire:
-        show_smart_banner("banner", "👑 World Domination")
-        quote = get_daily_content(QUOTES_FILE, "DailyMotoQuote", "Get in loser, we're going shopping.")
-        st.caption(f"Gossip: {quote}")
-        
-        empire_nav = st.radio("Menu:", ["🏆 Spring Fling Goals", "💸 Money Mover", "📜 The Burn Book"], horizontal=True, label_visibility="collapsed")
-        st.markdown("---")
-        
-        personal_df = load_personal_data()
-        goals_df = load_goals()
-        client_df = load_client_data()
-        
-        total_earned = client_df["Niece_Earnings"].sum() if not client_df.empty else 0.0
-        total_in_goals = goals_df["Balance"].sum()
-        available_cash = total_earned + personal_df["Amount"].sum() - total_in_goals
+# --- TAB 2: PLASTICS ---
+with tab_plastic:
+    st.markdown('<div class="plastic-container">', unsafe_allow_html=True)
+    st.markdown('<h2 style="color:#D81B60; text-align:center; border-bottom:3px solid black; font-family:Brush Script MT, cursive; font-size:40px;">💋 THE BURN BOOK (FINANCES)</h2>', unsafe_allow_html=True)
+    
+    # TUTORIAL LOGIC
+    if st.session_state.plastic_tut_step == 1:
+        st.info("🎓 TUTORIAL: Step 1")
+        if st.button("Next >", key="p_next1"): 
+            st.session_state.plastic_history.append({"role": "assistant", "content": "Okay, look at the CHAT. You can tell me 'Spend 50 on shoes' or 'Add 20 from Nana'. I'll handle the rest."})
+            st.session_state.plastic_tut_step = 2; st.rerun()
+    elif st.session_state.plastic_tut_step == 2:
+        st.info("🎓 TUTORIAL: Step 2")
+        if st.button("Next >", key="p_next2"): 
+            st.session_state.plastic_history.append({"role": "assistant", "content": "Down there are the BUTTONS. Spend, Save, Income. Use them if you're too lazy to type."})
+            st.session_state.plastic_tut_step = 3; st.rerun()
+    elif st.session_state.plastic_tut_step == 3:
+        st.info("🎓 TUTORIAL: Finished")
+        if st.button("Finish", key="p_fin"): 
+            st.session_state.plastic_history.append({"role": "assistant", "content": "That's it. Don't be poor."})
+            st.session_state.plastic_tut_step = 0; st.rerun()
 
-        if empire_nav == "🏆 Spring Fling Goals":
-            st.metric("💵 Shopping Money", f"${available_cash:,.2f}")
-            cols = st.columns(3)
-            for index, row in goals_df.iterrows():
-                with cols[index]:
-                    st.markdown(f"### {row['Name']}")
-                    percent = row['Balance'] / row['Target'] if row['Target'] > 0 else 0
-                    st.progress(min(percent, 1.0))
-                    st.write(f"${row['Balance']:.0f} / ${row['Target']:.0f}")
-                    pig_pic = get_pig_image(percent * 100)
-                    if pig_pic: st.image(pig_pic, width=150)
-            
-            with st.expander("Edit Goals"):
-                e_goal = st.selectbox("Goal", goals_df["Name"], key="empire_edit_goal")
-                new_n = st.text_input("New Name", key="empire_edit_name")
-                new_t = st.number_input("New Target", value=100.0, key="empire_edit_target")
-                if st.button("Update Goal"):
-                    idx = goals_df.index[goals_df['Name'] == e_goal].tolist()[0]
-                    goals_df.at[idx, 'Name'] = new_n if new_n else e_goal
-                    goals_df.at[idx, 'Target'] = new_t
-                    goals_df.to_csv(GOALS_FILE, index=False)
-                    st.rerun()
+    with st.container(height=300):
+        for msg in st.session_state.plastic_history:
+            css = "bubble-user" if msg["role"] == "user" else "bubble-plastic"
+            st.markdown(f'<div class="chat-row"><div class="bubble {css}">{msg["content"]}</div></div>', unsafe_allow_html=True)
 
-        elif empire_nav == "💸 Money Mover":
-            st.subheader("Move Money")
-            move_type = st.selectbox("Action", ["Deposit Cash (Gift)", "Shopping Spree", "Save to Goal", "Withdraw from Goal"], key="empire_move_type")
-            amt = st.number_input("Amount", value=10.0, key="empire_move_amt")
-            
-            # 1. DEPOSIT
-            if move_type == "Deposit Cash (Gift)":
-                source = st.text_input("From who?", "Nana", key="empire_dep_source")
-                if st.button("Add Cash"):
-                    save_personal_transaction("Income", source, amt, get_sass("gift"))
-                    st.balloons()
-                    show_sass_gif("saved") 
-                    st.rerun()
-            
-            # 2. SAVE TO GOAL
-            elif move_type == "Save to Goal":
-                goal = st.selectbox("To Goal", goals_df["Name"], key="empire_save_goal")
-                if st.button("Save"):
-                    if amt <= available_cash:
-                        update_goal(goal, amt)
-                        save_personal_transaction("Savings Transfer", f"Saved to {goal}", 0, get_sass("saving"))
-                        st.balloons()
-                        show_sass_gif("saved") 
-                        st.rerun()
-                    else: st.error("You have no money. Boo.")
-            
-            # 3. SPENDING
-            elif move_type == "Shopping Spree":
-                item = st.text_input("What did you buy?", key="empire_spend_item")
-                if st.button("Spend"):
-                    if amt <= available_cash:
-                        save_personal_transaction("Spending", item, amt, get_sass("spending"))
-                        show_sass_gif("spent") 
-                        st.rerun()
-                    else: st.error("Insufficient funds.")
+    if prompt_p := st.chat_input("Tell Regina...", key="p_in"):
+        st.session_state.plastic_history.append({"role": "user", "content": prompt_p})
+        success, report = process_plastics_command(prompt_p)
+        if success: show_sass_gif("spend")
+        pdf = load_personal_data(); goals = load_goals()
+        context = f"Cash: ${pdf['Amount'].sum():.2f}. Goals: {goals.to_dict('records')}."
+        reply_p = get_ai_reply("Regina George", prompt_p, context, report if success else "")
+        st.session_state.plastic_history.append({"role": "assistant", "content": reply_p})
+        st.rerun()
 
-            # 4. WITHDRAW FROM GOAL (This was missing!)
-            elif move_type == "Withdraw from Goal":
-                goal = st.selectbox("From Goal", goals_df["Name"], key="empire_withdraw_goal")
-                if st.button("Withdraw to Cash"):
-                    goal_row = goals_df[goals_df["Name"] == goal].iloc[0]
-                    if amt > goal_row["Balance"]:
-                        st.error("You don't have that much saved!")
-                    else:
-                        update_goal(goal, -amt)
-                        save_personal_transaction("Early Withdrawal", f"Took from {goal}", 0, get_sass("early_withdraw"))
-                        show_sass_gif("early_withdraw")
-                        st.warning("Processed. Don't spend it all in one place.")
-                        st.rerun()
+    st.markdown("---")
+    st.metric("🍸 LIQUID CASH", f"${load_personal_data()['Amount'].sum():.2f}")
 
-        elif empire_nav == "📜 The Burn Book":
-            st.write("### Your Personal Ledger")
-            
-            # HIDDEN EDITOR
-            with st.expander("✎ Edit Entries (Fix Mistakes)"):
-                edited_df = st.data_editor(personal_df, num_rows="dynamic", key="empire_editor")
-                if st.button("Save Changes"):
-                    save_personal_data(edited_df)
-                    st.success("Burn Book Updated.")
-                    st.rerun()
-            
-            st.markdown("---")
-            
-            # COLORFUL CARD FEED
-            if not personal_df.empty:
-                for index, row in personal_df.sort_index(ascending=False).iterrows():
-                    amt = row['Amount']
-                    css_class = "pos"  # Default Green (Fetch)
-                    display_amt = f"+${abs(amt):.2f}"
-                    
-                    if amt < 0:
-                        css_class = "neg" # Red (Gross)
-                        display_amt = f"-${abs(amt):.2f}"
-                    elif row['Category'] == "Reward":
-                        css_class = "gold"
-                        display_amt = f"+${abs(amt):.2f} (Reward)"
-                    
-                    st.markdown(f"""
-                    <div class="history-card {css_class}">
-                        <div style="display:flex; justify-content:space-between;">
-                            <strong>{row['Item']} ({row['Category']})</strong>
-                            <span>{row['Date']}</span>
-                        </div>
-                        <div style="font-size: 20px; font-weight: bold;">{display_amt}</div>
-                        <div style="font-style: italic; color: #888;">"{row['Sass_Level']}"</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-            else:
-                st.info("The book is empty. Go buy something.")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    if c1.button("🛍️ Spend"): st.session_state.p_tool = "Spend"
+    if c2.button("🐷 Save"): st.session_state.p_tool = "Save"
+    if c3.button("💵 Income"): st.session_state.p_tool = "Income"
+    if c4.button("🔥 Ledger"): st.session_state.p_tool = "Edit"
+    if c5.button("🎯 Goals"): st.session_state.p_tool = "Goals"
+    if c6.button("🎓 Guide"): 
+        st.session_state.p_tool = "None"
+        st.session_state.plastic_tut_step = 1
+        st.session_state.plastic_history.append({"role": "assistant", "content": "Ugh, fine. I'll teach you how to use this. Pay attention."})
+        st.rerun()
 
-    # ==========================
-    # TAB 3: THE RULES
-    # ==========================
-    with tab_help:
-        st.title("📕 The Rules of Feminism")
-        st.markdown("""
-        ### 1. The Plastics (Clients)
-        - You are the Queen Bee. They save money, you take **15%**.
-        - If they are late, you charge them **$5/day**.
-        - If you feel like a Cool Mom, you can waive the fee.
-        
-        ### 2. World Domination (Goals)
-        - **The Pig:** As you save, the pig fills up. It's like, the rules of physics.
-        - **Shopping Money:** This is your cash. Don't spend it all at once.
-        """)
+    ptool = getattr(st.session_state, 'p_tool', None)
+    if ptool == "Spend":
+        amt = st.number_input("Amt", 0.01); item = st.text_input("Item")
+        if st.button("Buy"): save_personal_transaction("Spending", item, amt, "Yolo"); st.success("Bought"); st.rerun()
+    elif ptool == "Save":
+        amt = st.number_input("Amt", 0.01); sel = st.selectbox("Goal", load_goals()["Name"])
+        if st.button("Transfer"): 
+            update_goal(sel, amt); save_personal_transaction("Transfer", f"To {sel}", amt, "Smart"); st.success("Saved"); st.rerun()
+    elif ptool == "Income":
+        amt = st.number_input("Amt", 0.01); src = st.text_input("Source")
+        if st.button("Add"): save_personal_transaction("Income", src, amt, "Job"); st.success("Added"); st.rerun()
+    elif ptool == "Edit":
+        st.data_editor(load_personal_data(), num_rows="dynamic")
+    elif ptool == "Goals":
+        st.data_editor(load_goals(), num_rows="dynamic")
+
+    st.markdown("---")
+    st.write("### 🏆 GOALS")
+    for i, row in load_goals().iterrows():
+        st.write(f"**{row['Name']}**: ${row['Balance']:.0f} / ${row['Target']:.0f}")
+        st.progress(min(row['Balance']/row['Target'] if row['Target']>0 else 0, 1.0))
+
+    st.markdown('</div>', unsafe_allow_html=True)
