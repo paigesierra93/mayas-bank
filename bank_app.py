@@ -7,13 +7,20 @@ import re
 from datetime import datetime
 import google.generativeai as genai
 import warnings
+import glob
+import time
 
 # --- 1. SILENCE WARNINGS ---
 warnings.filterwarnings("ignore")
 os.environ["STREAMLIT_SILENCE_DEPRECATION_WARNING"] = "1"
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="Mathletes & Plastics", page_icon="💋", layout="wide")
+# --- PAGE CONFIG (MOBILE OPTIMIZED) ---
+st.set_page_config(
+    page_title="Mathletes & Plastics", 
+    page_icon="💋", 
+    layout="wide",
+    initial_sidebar_state="collapsed" # Hides sidebar on phones
+)
 
 # --- FILE & FOLDER SETUP ---
 CLIENT_FILE = "ledger.csv"
@@ -26,9 +33,6 @@ GIF_DIR = "gifs"
 def get_base64_image(image_path):
     if os.path.exists(image_path):
         with open(image_path, "rb") as img_file: return base64.b64encode(img_file.read()).decode()
-    alt_path = image_path.replace(".jpg", ".jpeg")
-    if os.path.exists(alt_path):
-        with open(alt_path, "rb") as img_file: return base64.b64encode(img_file.read()).decode()
     return ""
 
 # --- DATA LOADING ---
@@ -196,30 +200,29 @@ def get_ai_reply(persona, prompt, context="", action_report=""):
         except: continue
     return "Internet broken."
 
-# --- IMAGES ---
-bg_menu = get_base64_image("menu_background.jpg")  
-bg_math = get_base64_image("north_shore.jpg") 
-bg_plastic = get_base64_image("burn_book_background.png")
-
-# --- CSS ---
+# --- CSS (MOBILE OPTIMIZED) ---
 st.markdown(f"""
 <style>
+    /* MOBILE TWEAKS */
+    .block-container {{ padding-top: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; }}
+    div[data-testid="stButton"] button {{ width: 100%; min-height: 50px; border-radius: 10px; }}
+    
+    /* THEMES */
     [data-testid="stSidebar"] {{
-        background-image: linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.3)), url("data:image/jpeg;base64,{bg_menu}");
-        background-size: cover; background-position: center; border-right: 3px solid black;
+        background-color: #000;
+        border-right: 3px solid #FF1493;
     }}
-    [data-testid="stSidebar"] * {{ color: white !important; text-shadow: 2px 2px 0px black; font-weight: 900; }}
     .math-container {{
-        background-image: linear-gradient(rgba(255, 249, 196, 0.9), rgba(255, 249, 196, 0.9)), url("data:image/jpeg;base64,{bg_math}");
-        background-size: cover; border: 4px solid #1A237E; padding: 20px; border-radius: 10px; color: black;
+        background-color: #FFF9C4;
+        border: 4px solid #1A237E; padding: 15px; border-radius: 10px; color: black;
     }}
     .plastic-container {{
-        background-image: linear-gradient(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.9)), url("data:image/png;base64,{bg_plastic}");
-        background-size: cover; border: 4px solid black; padding: 20px; border-radius: 0px; color: black;
+        background-color: #FCE4EC;
+        border: 4px solid #FF1493; padding: 15px; border-radius: 0px; color: black;
     }}
-    .bubble {{ padding: 12px 18px; border-radius: 20px; max-width: 80%; font-family: 'Verdana', sans-serif; font-size: 15px; margin-bottom: 8px; }}
+    .bubble {{ padding: 10px 15px; border-radius: 15px; max-width: 85%; font-family: sans-serif; font-size: 14px; margin-bottom: 5px; }}
     .bubble-math {{ background: #E8EAF6; border: 2px solid #1A237E; color: black; float: left; clear: both; }}
-    .bubble-plastic {{ background: #FCE4EC; border: 2px solid #D81B60; color: black; float: left; clear: both; }}
+    .bubble-plastic {{ background: #FFF0F5; border: 2px solid #D81B60; color: black; float: left; clear: both; }}
     .bubble-user {{ background: #333; color: white; border: 2px solid black; float: right; clear: both; text-align: right; }}
     .chat-row {{ overflow: hidden; margin-bottom: 10px; }}
 </style>
@@ -232,62 +235,60 @@ if 'plastic_history' not in st.session_state: st.session_state.plastic_history =
 if 'math_tut_step' not in st.session_state: st.session_state.math_tut_step = 0
 if 'plastic_tut_step' not in st.session_state: st.session_state.plastic_tut_step = 0
 
-# --- SIDEBAR ---
-with st.sidebar:
-    st.markdown("<h1>WELCOME,<br>TO MAYA'S<br>BURN BOOK</h1>", unsafe_allow_html=True)
-    st.markdown("---")
-    st.markdown(f"**Today's Gossip:**\n\n_{get_daily_content(QUOTES_FILE, 'Quote', 'On Wednesdays we wear pink.')}_")
-    st.markdown("---")
-    user_key = st.text_input("Enter Password (API)", type="password")
-    if user_key: st.session_state.api_key = user_key
+# --- SMART LOGIN (CHECK SECRETS) ---
+if "google" in st.secrets:
+    st.session_state.api_key = st.secrets["google"]["api_key"]
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.markdown("<h1>WELCOME,<br>TO MAYA'S<br>BURN BOOK</h1>", unsafe_allow_html=True)
+    st.markdown("<h1>🔥 MAYA'S<br>BURN BOOK</h1>", unsafe_allow_html=True)
     st.markdown("---")
     st.markdown(f"**Today's Gossip:**\n\n_{get_daily_content(QUOTES_FILE, 'Quote', 'On Wednesdays we wear pink.')}_")
-    st.markdown("---")
-    user_key = st.text_input("Enter Password (API)", type="password")
-    if user_key: st.session_state.api_key = user_key
-
-    # ==========================================
-    # PASTE NEW CODE HERE (Indented!) 👇
-    # ==========================================
-    st.divider()
-    st.header("💾 Save Bank Records")
-
-    # 1. LOAD BUTTON (Resume Previous Work)
-    uploaded_ledger = st.file_uploader("Upload 'ledger.csv' to resume:", type=['csv'])
-    if uploaded_ledger:
-        import pandas as pd
-        # Read the CSV and save it to the system
-        df = pd.read_csv(uploaded_ledger)
-        df.to_csv('ledger.csv', index=False)
-        st.success("✅ Ledger Loaded!")
-
-    # 2. SAVE BUTTON (Download Current Work)
-    import os
-    # Check if the file exists so the app doesn't crash on the first run
-    if os.path.exists("ledger.csv"):
-        with open("ledger.csv", "rb") as file:
-            st.download_button(
-                label="⬇️ Download Ledger",
-                data=file,
-                file_name="ledger.csv",
-                mime="text/csv"
-            )
-    # ==========================================
-
-# --- END OF SIDEBAR ---
-# (The code below goes back to the far left, no indentation)
-
-if not st.session_state.api_key:
-    st.markdown("<div style='text-align:center; margin-top:20%; font-family:Arial Black; font-size: 50px;'>LOCKED.</div>", unsafe_allow_html=True)
-    st.stop()
     
-if not st.session_state.api_key:
-    st.markdown("<div style='text-align:center; margin-top:20%; font-family:Arial Black; font-size: 50px;'>LOCKED.</div>", unsafe_allow_html=True)
-    st.stop()
+    # MANUAL LOGIN FALLBACK
+    if not st.session_state.api_key:
+        user_key = st.text_input("Enter Password (API)", type="password")
+        if user_key: st.session_state.api_key = user_key
+    else:
+        st.success("✅ AI Access Granted")
+
+    # --- CLOUD SYNC BUTTON ---
+    st.divider()
+    if st.button("☁️ Sync to Cloud (Save)"):
+        try:
+            from github import Github
+            
+            # 1. Get Secrets
+            token = st.secrets["github"]["token"]
+            repo_name = st.secrets["github"]["repo_name"]
+            
+            # 2. Login
+            g = Github(token)
+            repo = g.get_repo(repo_name)
+            
+            status_text = st.empty()
+            status_text.text("⏳ Scanning files...")
+            
+            # 3. Collect ALL CSV Files
+            files_to_save = glob.glob("*.csv") 
+            
+            # 4. Upload
+            for file_path in files_to_save:
+                if os.path.exists(file_path):
+                    with open(file_path, "rb") as f:
+                        content = f.read()
+                    try:
+                        contents = repo.get_contents(file_path)
+                        repo.update_file(contents.path, f"Update {file_path}", content, contents.sha)
+                    except:
+                        repo.create_file(file_path, f"Create {file_path}", content)
+            
+            st.success(f"✅ Synced {len(files_to_save)} files!")
+            time.sleep(2)
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"Save Failed: {e}")
 
 if not st.session_state.api_key:
     st.markdown("<div style='text-align:center; margin-top:20%; font-family:Arial Black; font-size: 50px;'>LOCKED.</div>", unsafe_allow_html=True)
