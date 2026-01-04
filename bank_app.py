@@ -19,7 +19,7 @@ st.set_page_config(
     page_title="Mathletes & Plastics", 
     page_icon="💋", 
     layout="wide",
-    initial_sidebar_state="collapsed" # Hides sidebar on phones
+    initial_sidebar_state="collapsed"
 )
 
 # --- FILE & FOLDER SETUP ---
@@ -31,9 +31,22 @@ GIF_DIR = "gifs"
 
 # --- IMAGE HELPERS ---
 def get_base64_image(image_path):
+    # Try exact match first
     if os.path.exists(image_path):
         with open(image_path, "rb") as img_file: return base64.b64encode(img_file.read()).decode()
+    
+    # Try Uppercase/Lowercase variations (Linux is picky!)
+    alt_paths = [image_path.lower(), image_path.upper(), image_path.replace(".jpg", ".JPG"), image_path.replace(".png", ".PNG")]
+    for p in alt_paths:
+        if os.path.exists(p):
+            with open(p, "rb") as img_file: return base64.b64encode(img_file.read()).decode()
+            
     return ""
+
+# --- LOAD IMAGES (THE FIX) ---
+bg_menu = get_base64_image("menu_background.jpg")
+bg_math = get_base64_image("north_shore.jpg")
+bg_plastic = get_base64_image("burn_book_background.png") # Make sure this matches your file name!
 
 # --- DATA LOADING ---
 def load_client_data():
@@ -200,26 +213,48 @@ def get_ai_reply(persona, prompt, context="", action_report=""):
         except: continue
     return "Internet broken."
 
-# --- CSS (MOBILE OPTIMIZED) ---
+# --- CSS (VISUAL REPAIR) ---
+# This CSS puts the images back into the backgrounds!
 st.markdown(f"""
 <style>
-    /* MOBILE TWEAKS */
-    .block-container {{ padding-top: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; }}
-    div[data-testid="stButton"] button {{ width: 100%; min-height: 50px; border-radius: 10px; }}
-    
-    /* THEMES */
+    /* 1. RESTORE SIDEBAR IMAGE */
     [data-testid="stSidebar"] {{
-        background-color: #000;
+        background-image: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url("data:image/jpeg;base64,{bg_menu}");
+        background-size: cover; 
+        background-position: center;
+        background-color: #000; /* Fallback if image missing */
         border-right: 3px solid #FF1493;
     }}
+    [data-testid="stSidebar"] * {{ color: white !important; text-shadow: 1px 1px 2px black; }}
+    
+    /* 2. RESTORE MATH BACKGROUND */
     .math-container {{
-        background-color: #FFF9C4;
+        background-image: linear-gradient(rgba(255, 249, 196, 0.9), rgba(255, 249, 196, 0.9)), url("data:image/jpeg;base64,{bg_math}");
+        background-size: cover;
+        background-color: #FFF9C4; /* Fallback */
         border: 4px solid #1A237E; padding: 15px; border-radius: 10px; color: black;
     }}
+    
+    /* 3. RESTORE PLASTICS BACKGROUND */
     .plastic-container {{
-        background-color: #FCE4EC;
+        background-image: linear-gradient(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.8)), url("data:image/png;base64,{bg_plastic}");
+        background-size: cover;
+        background-color: #FCE4EC; /* Fallback */
         border: 4px solid #FF1493; padding: 15px; border-radius: 0px; color: black;
     }}
+
+    /* 4. FIX THE TABS (MAKE THEM POP) */
+    button[data-baseweb="tab"] {{
+        font-size: 20px !important;
+        font-weight: bold !important;
+        background-color: white;
+        border: 2px solid #ddd;
+        border-radius: 5px 5px 0 0;
+        margin-right: 5px;
+    }}
+    div[data-baseweb="tab-list"] {{ gap: 10px; }}
+    
+    /* CHAT BUBBLES */
     .bubble {{ padding: 10px 15px; border-radius: 15px; max-width: 85%; font-family: sans-serif; font-size: 14px; margin-bottom: 5px; }}
     .bubble-math {{ background: #E8EAF6; border: 2px solid #1A237E; color: black; float: left; clear: both; }}
     .bubble-plastic {{ background: #FFF0F5; border: 2px solid #D81B60; color: black; float: left; clear: both; }}
@@ -235,7 +270,7 @@ if 'plastic_history' not in st.session_state: st.session_state.plastic_history =
 if 'math_tut_step' not in st.session_state: st.session_state.math_tut_step = 0
 if 'plastic_tut_step' not in st.session_state: st.session_state.plastic_tut_step = 0
 
-# --- SMART LOGIN (CHECK SECRETS) ---
+# --- SMART LOGIN ---
 if "google" in st.secrets:
     st.session_state.api_key = st.secrets["google"]["api_key"]
 
@@ -245,38 +280,28 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(f"**Today's Gossip:**\n\n_{get_daily_content(QUOTES_FILE, 'Quote', 'On Wednesdays we wear pink.')}_")
     
-    # MANUAL LOGIN FALLBACK
     if not st.session_state.api_key:
         user_key = st.text_input("Enter Password (API)", type="password")
         if user_key: st.session_state.api_key = user_key
     else:
         st.success("✅ AI Access Granted")
 
-    # --- CLOUD SYNC BUTTON ---
     st.divider()
     if st.button("☁️ Sync to Cloud (Save)"):
         try:
             from github import Github
-            
-            # 1. Get Secrets
             token = st.secrets["github"]["token"]
             repo_name = st.secrets["github"]["repo_name"]
-            
-            # 2. Login
             g = Github(token)
             repo = g.get_repo(repo_name)
             
             status_text = st.empty()
             status_text.text("⏳ Scanning files...")
-            
-            # 3. Collect ALL CSV Files
             files_to_save = glob.glob("*.csv") 
             
-            # 4. Upload
             for file_path in files_to_save:
                 if os.path.exists(file_path):
-                    with open(file_path, "rb") as f:
-                        content = f.read()
+                    with open(file_path, "rb") as f: content = f.read()
                     try:
                         contents = repo.get_contents(file_path)
                         repo.update_file(contents.path, f"Update {file_path}", content, contents.sha)
@@ -286,7 +311,6 @@ with st.sidebar:
             st.success(f"✅ Synced {len(files_to_save)} files!")
             time.sleep(2)
             st.rerun()
-            
         except Exception as e:
             st.error(f"Save Failed: {e}")
 
@@ -297,6 +321,8 @@ if not st.session_state.api_key:
 # ==========================================
 # MAIN APP
 # ==========================================
+# This creates the tabs at the top. 
+# They might be white-on-white, but the CSS above fixes that!
 tab_math, tab_plastic = st.tabs(["📘 Mathletes", "💖 The Plastics"])
 
 # --- TAB 1: MATHLETES ---
@@ -304,7 +330,7 @@ with tab_math:
     st.markdown('<div class="math-container">', unsafe_allow_html=True)
     st.markdown('<h2 style="color:#1A237E; text-align:right; border-bottom:3px solid #1A237E;">MATHLETES: CLIENT MANAGEMENT</h2>', unsafe_allow_html=True)
     
-    # TUTORIAL LOGIC
+    # RESTORED TUTORIAL LOGIC
     if st.session_state.math_tut_step == 1:
         st.info("🎓 TUTORIAL: Step 1")
         if st.button("Next >"): 
@@ -346,7 +372,7 @@ with tab_math:
     if c4.button("🎓 School"): 
         st.session_state.m_mode = "None"
         st.session_state.math_tut_step = 1
-        st.session_state.math_history.append({"role": "assistant", "content": "Alright class, listen up. Welcome to the Mathletes Audit Log tutorial."})
+        st.session_state.math_history.append({"role": "assistant", "content": "Alright class, listen up."})
         st.rerun()
     if c5.button("🔄 Clear"): st.session_state.m_mode = "None"
     
@@ -379,7 +405,7 @@ with tab_plastic:
     st.markdown('<div class="plastic-container">', unsafe_allow_html=True)
     st.markdown('<h2 style="color:#D81B60; text-align:center; border-bottom:3px solid black; font-family:Brush Script MT, cursive; font-size:40px;">💋 THE BURN BOOK (FINANCES)</h2>', unsafe_allow_html=True)
     
-    # TUTORIAL LOGIC
+    # RESTORED TUTORIAL LOGIC
     if st.session_state.plastic_tut_step == 1:
         st.info("🎓 TUTORIAL: Step 1")
         if st.button("Next >", key="p_next1"): 
@@ -423,7 +449,7 @@ with tab_plastic:
     if c6.button("🎓 Guide"): 
         st.session_state.p_tool = "None"
         st.session_state.plastic_tut_step = 1
-        st.session_state.plastic_history.append({"role": "assistant", "content": "Ugh, fine. I'll teach you how to use this. Pay attention."})
+        st.session_state.plastic_history.append({"role": "assistant", "content": "Ugh, fine."})
         st.rerun()
 
     ptool = getattr(st.session_state, 'p_tool', None)
