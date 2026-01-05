@@ -17,7 +17,7 @@ os.environ["STREAMLIT_SILENCE_DEPRECATION_WARNING"] = "1"
 # --- PAGE CONFIG (MOBILE OPTIMIZED) ---
 st.set_page_config(
     page_title="Mathletes & Plastics", 
-    page_icon="💋", 
+    page_icon="burn_icon.png", 
     layout="wide",
     initial_sidebar_state="collapsed"
 )
